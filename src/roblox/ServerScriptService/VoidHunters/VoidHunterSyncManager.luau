@@ -4,8 +4,9 @@
 	SUPERSEDED compatibility facade for multiplayer lifecycle callers.
 
 	Canonical blueprint persistence and construction live in
-	`VoidHunterBuilderServer`. This module owns only player/session lifecycle,
-	spawn placement, and the legacy RemoteEvent bridge.
+	`VoidHunterBuilderServer`. Ship ownership/lifecycle lookup lives in
+	`ShipRegistry`. This module owns only player spawn orchestration and the
+	legacy RequestSpawn remote bridge.
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -17,7 +18,6 @@ local BuilderServer = require(ServerScriptService:WaitForChild("VoidHunterBuilde
 local ShipRegistry = require(ReplicatedStorage.Shared.Ship:WaitForChild("ShipRegistry"))
 
 local VoidHunterSyncManager = {}
-local activeShips: { [Player]: Model } = {}
 
 local commsFolder = ReplicatedStorage:FindFirstChild("Communication")
 if not commsFolder then
@@ -50,13 +50,13 @@ if not shipsFolder then
 end
 shipsFolder = shipsFolder :: Folder
 
-local function spawnPosition(player: Player): Vector3
+local function getSpawnPosition(player: Player): Vector3
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	if root and root:IsA("BasePart") then
 		return root.Position + Vector3.new(0, 0, -40)
 	end
-	return Vector3.new(0, 0, 0)
+	return Vector3.zero
 end
 
 function VoidHunterSyncManager.GetPlayerBlueprint(player: Player)
@@ -85,9 +85,9 @@ function VoidHunterSyncManager.SpawnPlayerShip(player: Player): (Model?, string?
 		return nil, "Build failed"
 	end
 
-	local previousShip = activeShips[player]
+	local previousShip = ShipRegistry.GetShip(player)
 	if previousShip and previousShip.Parent then
-		ShipRegistry.Unregister(previousShip)
+		ShipRegistry.UnregisterShip(previousShip)
 		previousShip:Destroy()
 	end
 
@@ -95,12 +95,10 @@ function VoidHunterSyncManager.SpawnPlayerShip(player: Player): (Model?, string?
 	ship:SetAttribute("OwnerId", player.UserId)
 	ship:SetAttribute("IsShip", true)
 	ship.Parent = shipsFolder
-	ship:PivotTo(CFrame.new(spawnPosition(player)))
+	ship:PivotTo(CFrame.new(getSpawnPosition(player)))
 
 	ShipRegistry.Register(player, ship)
-	activeShips[player] = ship
 	player:SetAttribute("CurrentShip", ship.Name)
-
 	return ship, nil
 end
 
@@ -109,12 +107,12 @@ RequestSpawn.OnServerEvent:Connect(function(player: Player)
 end)
 
 Players.PlayerRemoving:Connect(function(player: Player)
-	local ship = activeShips[player]
+	local ship = ShipRegistry.GetShip(player)
 	if ship and ship.Parent then
-		ShipRegistry.Unregister(ship)
+		ShipRegistry.UnregisterShip(ship)
 		ship:Destroy()
 	end
-	activeShips[player] = nil
+	ShipRegistry.UnregisterPlayer(player)
 end)
 
 return VoidHunterSyncManager

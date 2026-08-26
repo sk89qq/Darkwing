@@ -5,8 +5,8 @@
 	Lua state is authoritative; Instance Attributes are diagnostic/persistence mirrors.
 	Structural mutations are handled by StructuralAuthority.
 
-	15% critical presentation threshold is user-observed and remains isolated until
-	the original render/update method is recovered and code-verified.
+	Component binding is fail-closed: the part must carry an explicit ComponentType
+	that exists in VoidHunterComponents. No gameplay state is inferred from Part names.
 ]=]
 
 local HttpService = game:GetService("HttpService")
@@ -45,17 +45,15 @@ local function newId(): string
 end
 
 local function findDefinition(part: BasePart): (string?, any?)
-	local attrType = part:GetAttribute("ComponentType")
-	if typeof(attrType) == "string" and Components.Types[attrType] then
-		return attrType, Components.Types[attrType]
+	local typeName = part:GetAttribute("ComponentType")
+	if typeof(typeName) ~= "string" or typeName == "" then
+		return nil, nil
 	end
-
-	for typeName, definition in pairs(Components.Types) do
-		if definition.Name == part.Name then
-			return typeName, definition
-		end
+	local definition = Components.Types[typeName]
+	if type(definition) ~= "table" then
+		return nil, nil
 	end
-	return nil, nil
+	return typeName, definition
 end
 
 local function readHealth(definition: any): number
@@ -78,16 +76,21 @@ end
 function ComponentAuthority.Bind(part: BasePart, explicitTypeName: string?): ComponentState?
 	if not part or not part:IsA("BasePart") then return nil end
 
-	local typeName, definition = explicitTypeName, nil
+	local typeName = explicitTypeName
+	local definition
 	if typeName then
 		definition = Components.Types[typeName]
 	else
 		typeName, definition = findDefinition(part)
 	end
-	if not typeName or type(definition) ~= "table" then return nil end
+	if typeof(typeName) ~= "string" or type(typeName) ~= "string" or type(definition) ~= "table" then
+		return nil
+	end
 
 	local existing = states[part]
-	if existing then return existing end
+	if existing then
+		return existing
+	end
 
 	local maxHealth = readHealth(definition)
 	local existingBaseColor = part:GetAttribute("BaseColor")

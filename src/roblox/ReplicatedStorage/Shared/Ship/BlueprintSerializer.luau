@@ -5,6 +5,10 @@
 	The saved representation intentionally contains no Roblox Instance/CFrame/
 	Vector3/WeldConstraint values. Runtime reconstruction must flow through
 	StructuralAuthority rather than bypassing the structural solver.
+
+	Blueprint IDs are persistence identifiers. Runtime ComponentId values are
+	generated independently by ComponentAuthority and are never compared to
+	BlueprintComponent.Id except through the explicit BlueprintId attribute.
 ]=]
 
 local HttpService = game:GetService("HttpService")
@@ -180,8 +184,10 @@ end
 
 function BlueprintSerializer.FindRoot(ship: Model, blueprint: Blueprint): BasePart?
 	for _, instance in ipairs(ship:GetDescendants()) do
-		if instance:IsA("BasePart") and instance:GetAttribute("ComponentId") == blueprint.RootComponentId then
-			return instance
+		if instance:IsA("BasePart") then
+			if instance:GetAttribute("BlueprintId") == blueprint.RootComponentId then
+				return instance
+			end
 		end
 	end
 	return nil

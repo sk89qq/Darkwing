@@ -207,7 +207,7 @@ local function initializeShipShield(ship: Model)
 		return
 	end
 
-	local shieldPart = nil
+	local shieldPart: BasePart? = nil
 	local shieldDefinitions = getShieldComponents(ship)
 	for part in pairs(shieldDefinitions) do
 		shieldPart = part
@@ -327,6 +327,32 @@ end
 		deactivateShield(bubble)
 	end
 end)
+
+local playerActionEvent = ReplicatedStorage:FindFirstChild("VoidHunterPlayerAction")
+if playerActionEvent and playerActionEvent:IsA("RemoteEvent") then
+	(playerActionEvent :: RemoteEvent).OnServerEvent:Connect(function(player: Player, action: string, requestedAction: string?)
+		if action ~= "ShieldToggle" then
+			return
+		end
+
+		local ship = ShipRegistry.GetShip(player)
+		if not ship or not ship.Parent then
+			return
+		end
+
+		initializeShipShield(ship)
+		local bubble = getBubbleForShip(ship)
+		if not bubble then
+			return
+		end
+
+		if requestedAction == "activate" then
+			activateShield(bubble)
+		elseif requestedAction == "deactivate" then
+			deactivateShield(bubble)
+		end
+	end)
+end
 
 local ShieldSystem = {}
 ShieldSystem.damageShield = damageShield

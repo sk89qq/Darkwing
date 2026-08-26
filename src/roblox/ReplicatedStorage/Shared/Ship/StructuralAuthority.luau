@@ -2,16 +2,9 @@
 	StructuralAuthority
 	Canonical ship graph mutation boundary.
 
-	Rules:
-	- ShipSocketGraph remains the geometry/socket solver.
-	- This module owns structural mutations: attach/detach/replace/sever.
-	- ComponentAuthority owns component health/state.
-	- Roblox Instances are the physical projection.
-	- A detached connected subtree remains alive as a physical debris assembly;
-	  it is not deleted merely because its parent connection was severed.
-
-	This is deliberately conservative: it does not invent original debris cleanup
-	or detachment constants that are not recovered from the client.
+	ShipSocketGraph remains the socket/geometry solver. This service is the only
+	runtime boundary intended to perform structural attach, detach, replacement,
+	and severance.
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -83,11 +76,33 @@ function StructuralAuthority.BindShip(ship: Model)
 	return StructuralAuthority.BuildGraph(ship)
 end
 
+function StructuralAuthority.AttachComponent(ship: Model, part: BasePart, componentType: string, maxSnapDistance: number?): (any?, string?)
+	if not ship or not ship.Parent or not part or not part.Parent then
+		return nil, "invalid input"
+	end
+
+	local graph = StructuralAuthority.BuildGraph(ship)
+	local candidate = graph:FindBestSnap(part, componentType, maxSnapDistance)
+	if not candidate then
+		return nil, "no compatible hardpoint"
+	end
+
+	part.CFrame = candidate.TargetCFrame
+	local childNode = graph:AttachComponent(candidate.ParentNode, candidate.ParentSocket, part, componentType)
+	if not childNode then
+		return nil, "graph attach failed"
+	end
+
+	ComponentAuthority.Bind(part, componentType)
+	ComponentAuthority.SetParent(part, candidate.ParentNode.Part)
+	return childNode, nil
+end
+
 function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason: string?): Model?
 	if not ship or not ship.Parent or not part or not part.Parent then
 		return nil
 	end
-	if part:IsDescendantOf(ship) == false then
+	if not part:IsDescendantOf(ship) then
 		return nil
 	end
 
@@ -97,7 +112,6 @@ function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason
 		return nil
 	end
 	if graph.RootNodeId == nodeId then
-		-- Root/core removal is a ship-level destruction event, not a detached child.
 		return nil
 	end
 
@@ -112,7 +126,6 @@ function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason
 			table.insert(parts, node.Part)
 		end
 	end
-
 	if #parts == 0 then
 		return nil
 	end
@@ -140,9 +153,8 @@ function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason
 		detachedPart.Parent = debrisAssembly
 	end
 
-	local primary = parts[1]
-	if primary then
-		debrisAssembly.PrimaryPart = primary
+	if parts[1] then
+		debrisAssembly.PrimaryPart = parts[1]
 	end
 
 	for _, detachedPart in ipairs(parts) do
@@ -199,7 +211,7 @@ function StructuralAuthority.SeverDisconnected(ship: Model): { Model }
 	return detached
 end
 
-function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, newPart: BasePart, reason: string?): (Model?, boolean)
+function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, newPart: BasePart, componentType: string, maxSnapDistance: number?): (Model?, boolean)
 	if not ship or not oldPart or not newPart then
 		return nil, false
 	end
@@ -211,10 +223,14 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		return nil, false
 	end
 
-	-- Replacement is detach + normal attach; it is never repair.
-	local detached = StructuralAuthority.DetachComponent(ship, oldPart, reason or "Replacement")
+	local detached = StructuralAuthority.DetachComponent(ship, oldPart, "Replacement")
 	if not detached then
 		return nil, false
+	end
+
+	local _, err = StructuralAuthority.AttachComponent(ship, newPart, componentType, maxSnapDistance)
+	if err then
+		return detached, false
 	end
 
 	return detached, true

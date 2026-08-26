@@ -1,7 +1,7 @@
 # VOIDA SUPER AUDIT — 2026-08-26
 
 ## Authority
-The supplied raw `voidhunters_decompiled` package is the authoritative first-pass forensic source. The repository manifest is `VOIDA/00_RAW_FORENSIC_REFERENCE.md`; the intact raw archive is `/VOIDA/voidhunters_decompiled_raw.zip` in the user Library.
+The supplied raw `voidhunters_decompiled` package is the authoritative first-pass forensic source. The repository manifest is `VOIDA/00_RAW_FORENSIC_REFERENCE.md`; the intact raw archive is `VOIDA/voidhunters_decompiled_raw.zip` in the user Library.
 
 No synthesized blueprint outranks the raw source. The removed `05_FORENSIC_PORT_BLUEPRINT.md` was a conflicting derived document and is not an authority.
 
@@ -33,7 +33,7 @@ Do not add subsystem-local authoritative copies.
 - `ShipSocketGraph` requires explicit component definitions from `Components.Types` + `Components.Connections` before creating topology nodes or sockets.
 - `ShipSocketGraph` records explicit `ParentNodeId`, `ParentSocketId`, and `ConnectedSocketId` metadata during canonical attachment.
 - `ShipSocketGraph` uses explicit relationship metadata first; legacy weld/proximity reconstruction is limited to an import adapter and cannot create unknown components or sockets.
-- `StructuralAuthority.ReplaceComponent` now validates the replacement definition and preserved parent hardpoint before detaching the existing component, then attaches to that exact socket and rolls back on failure.
+- `StructuralAuthority.ReplaceComponent` validates the replacement definition and preserved parent hardpoint before detaching the existing component, then attaches to that exact socket and rolls back on failure.
 - Blueprint persistence and construction are consolidated into `VoidHunterBuilderServer`; the old blueprint system is now a compatibility facade with no independent datastore/schema.
 - Builder placement routes through `StructuralAuthority`; the old direct blueprint mutation/adjacency authority was removed.
 - Sync blueprint persistence is superseded by `VoidHunterBuilderServer`; ship lifecycle lookup routes through `ShipRegistry`.
@@ -47,9 +47,11 @@ Do not add subsystem-local authoritative copies.
 - PvP non-core destruction now routes through `StructuralAuthority.DetachComponent`.
 - PvP core destruction unregisters the ship from `ShipRegistry` before physical destruction.
 - Spatial transient targeting remains query-based rather than workspace-descendant scanning.
-- `RigidBody2D:GetWorldPointVelocity` now provides the rigid-body-consistent kinematic velocity at a component's local position.
-- `RigidBody2D:CreateDetachedBody` now seeds a newly independent body from position, linear point velocity, rotation, angular velocity, restitution, and fixed-Y without inventing a detachment impulse.
-- `VOIDA/10_ROBLOX_LUAU_REFERENCE.md` is the standing implementation-style reference, subordinate to raw source semantics.
+- `RigidBody2D:GetWorldPointVelocity` provides rigid-body-consistent kinematic velocity at a component's local position.
+- `RigidBody2D:CreateDetachedBody` seeds a newly independent body from source position, point velocity, rotation, angular velocity, restitution, and fixed-Y without inventing a detachment impulse.
+- `StructuralAuthority.DetachComponent` now projects the source rigid-body point velocity into the detached Roblox assembly instead of blindly copying the ship root velocity.
+- `VoidHunterDebrisManager` requires explicit component identity and no longer randomly fabricates debris component types.
+- Debris animation uses one scheduler wait per update and retains explicit component provenance.
 
 ## Raw-source corrections from this pass
 1. `wlb.java` directly initializes `hab.g` as 56 component-definition slots.
@@ -57,10 +59,11 @@ Do not add subsystem-local authoritative copies.
 3. `wfb.java` derives health through `lw.a(..., u)`; the repository's simplified `sqrt(area) * z / 64` helper is not sufficient to call the exact transformation raw-verified.
 4. `summary.txt` records CFR gaps in major methods. Those methods remain `RAW-GAP` until recovered from bytecode or a better decompilation.
 5. Existing `ForensicDataModel` entries that were synthesized before the raw package was available must be treated as provisional unless they can be traced directly to raw source.
+6. Raw `nbb` debris transfer behavior has now been directly recovered: the debris specialization receives the native transient motion quantities from its source body and clears those source accumulators. The Roblox port mirrors the recovered inherited kinematic state through `RigidBody2D`; the exact randomized debris-launch term and associated native scaling constants remain unresolved.
 
 ## Remaining P0
-1. Recover exact source detach force, momentum carry-over policy, debris persistence, and cleanup behavior before adding any numeric detach/explosion policy.
-2. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
+1. Recover the exact native randomized debris-launch force/direction and any source-specific scaling constants associated with the `nbb`/component debris spawn path.
+2. Recover exact remaining `anb` physics equations/constants that are still not structurally available from the supplied decompilation before declaring full Roblox physics parity.
 3. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
 4. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
 5. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.

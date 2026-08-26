@@ -1,11 +1,13 @@
 --[[
 	ShieldSystem: Tactical Shield Bubble & Deflection Engine.
-	Sourced from AlterOrb / FunOrb Shield Mechanics.
-	
-	Features:
-	  - Absorption damage type matrix (Kinetic vs Thermal vs Energy vs EMP)
-	  - Broken shield reboot delay & gradual recharge
-	  - 2D perimeter bounds check before projectile reaches physical hull components
+
+	STATUS: IMPLEMENTED / FORENSIC PARITY PARTIAL
+	The decompiled client confirms directional shield parameters, but the exact
+	control flow and numerical absorption model are not fully recovered here.
+	Therefore the values below are PROTOTYPE/INFERRED, not CODE_VERIFIED.
+
+	Do not expand this model as if it were original behavior until the source
+	shield behaviour/config consumers are traced.
 ]]
 
 local CombatTypes = require(game.ReplicatedStorage.Shared.Combat.CombatTypes)
@@ -13,27 +15,25 @@ local CombatTypes = require(game.ReplicatedStorage.Shared.Combat.CombatTypes)
 local ShieldSystem = {}
 ShieldSystem.__index = ShieldSystem
 
--- Multipliers applied to shield health when absorbing specific damage types
+-- [INFERRED] Prototype absorption matrix retained for current playability.
 local SHIELD_DAMAGE_MODIFIERS = {
-	Kinetic = 0.70,   -- Shields resist kinetic bullets moderately
-	Thermal = 1.00,   -- Standard thermal absorption
-	Energy = 1.25,    -- Lasers burn through shield faster
-	Explosive = 0.85, -- Explosive blast partially absorbed
-	EMP = 2.50,       -- EMP severely drains/overloads shields
+	Kinetic = 0.70,
+	Thermal = 1.00,
+	Energy = 1.25,
+	Explosive = 0.85,
+	EMP = 2.50,
 }
 
 function ShieldSystem.new(maxHP: number?, regenRate: number?, radius: number?)
 	local self = setmetatable({}, ShieldSystem)
-
-	self.MaxHP = maxHP or 150.0
+	self.MaxHP = maxHP or 150.0 -- [INFERRED]
 	self.CurrentHP = self.MaxHP
-	self.RegenRate = regenRate or 15.0 -- HP per second
-	self.RebootDelay = 3.5             -- Seconds before recharge after breaking
+	self.RegenRate = regenRate or 15.0 -- [INFERRED]
+	self.RebootDelay = 3.5 -- [INFERRED]
 	self.TimeSinceDamage = 0.0
 	self.IsActive = true
-	self.Radius = radius or 12.0
+	self.Radius = radius or 12.0 -- [INFERRED]
 	self.VisualPart = nil :: BasePart?
-
 	return self
 end
 
@@ -44,10 +44,23 @@ function ShieldSystem:CalculateFromShip(shipModel: Model)
 
 	for _, part in ipairs(shipModel:GetDescendants()) do
 		if part:IsA("BasePart") and not part:GetAttribute("IsDebris") then
-			local pName = part.Name
-			if string.find(pName, "Shield") or string.find(pName, "Deflector") then
-				totalShield += 100.0
-				totalRegen += 10.0
+			local capacity = part:GetAttribute("ShieldCapacity")
+			local regen = part:GetAttribute("ShieldRegen")
+			if typeof(capacity) == "number" then totalShield += capacity end
+			if typeof(regen) == "number" then totalRegen += regen end
+		end
+	end
+
+	if totalShield <= 0 then
+		-- Compatibility fallback retained for the prototype; exact component-based
+		-- shield capacity remains an explicit reconciliation task.
+		for _, part in ipairs(shipModel:GetDescendants()) do
+			if part:IsA("BasePart") and not part:GetAttribute("IsDebris") then
+				local pName = part.Name
+				if string.find(pName, "Shield") or string.find(pName, "Deflector") then
+					totalShield += 100.0
+					totalRegen += 10.0
+				end
 			end
 		end
 	end
@@ -67,7 +80,7 @@ end
 
 function ShieldSystem:AbsorbDamage(rawDamage: number, damageType: CombatTypes.DamageType): number
 	if not self.IsActive or self.CurrentHP <= 0 then
-		return rawDamage -- Full damage passes directly to hull
+		return rawDamage
 	end
 
 	self.TimeSinceDamage = 0.0
@@ -76,14 +89,13 @@ function ShieldSystem:AbsorbDamage(rawDamage: number, damageType: CombatTypes.Da
 
 	if self.CurrentHP >= effectiveDamage then
 		self.CurrentHP -= effectiveDamage
-		return 0 -- Completely absorbed
-	else
-		local leftoverEffective = effectiveDamage - self.CurrentHP
-		self.CurrentHP = 0
-		self.IsActive = false
-		-- Convert leftover back to unabsorbed raw damage for hull penetration
-		return leftoverEffective / modifier
+		return 0
 	end
+
+	local leftoverEffective = effectiveDamage - self.CurrentHP
+	self.CurrentHP = 0
+	self.IsActive = false
+	return leftoverEffective / modifier
 end
 
 function ShieldSystem:Step(dt: number)
@@ -92,14 +104,12 @@ function ShieldSystem:Step(dt: number)
 	if self.CurrentHP <= 0 then
 		self.IsActive = false
 		if self.TimeSinceDamage >= self.RebootDelay and self.MaxHP > 0 then
-			self.CurrentHP = self.MaxHP * 0.20 -- Reboots with 20% integrity
+			self.CurrentHP = self.MaxHP * 0.20 -- [INFERRED]
 			self.IsActive = true
 		end
-	elseif self.CurrentHP < self.MaxHP then
-		if self.TimeSinceDamage >= 1.5 then
-			self.CurrentHP = math.min(self.MaxHP, self.CurrentHP + self.RegenRate * dt)
-			self.IsActive = true
-		end
+	elseif self.CurrentHP < self.MaxHP and self.TimeSinceDamage >= 1.5 then
+		self.CurrentHP = math.min(self.MaxHP, self.CurrentHP + self.RegenRate * dt)
+		self.IsActive = true
 	end
 end
 

@@ -1,0 +1,130 @@
+name: One-shot Authority Migration
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.ref == 'refs/heads/main' && github.event.head_commit.message != 'chore: complete authoritative Luau migration'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Migrate deprecated authority surfaces
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+          report = []
+
+          # Only mutate live implementation. Raw forensic sources and historical
+          # evidence remain untouched by design.
+          live = [p for p in (root / 'src/roblox').rglob('*.luau') if 'SharedSource' not in p.parts]
+
+          controller = root / 'src/roblox/ServerScriptService/VoidHunterWeaponController.luau'
+          text = controller.read_text(encoding='utf-8')
+
+          # Remove the compatibility authority tables completely.
+          compat = re.compile(r'\n-- Compatibility views over ComponentAuthority\..*?\n-- Rate limiting', re.S)
+          new_text, n = compat.subn('\n-- Rate limiting', text, count=1)
+          if n != 1:
+              raise SystemExit('Expected exactly one ComponentAuthority compatibility block')
+          text = new_text
+
+          # Add canonical ship registry dependency.
+          anchor = 'local TeamIdentity = require(ReplicatedStorage.Shared.Combat:WaitForChild("TeamIdentity"))'
+          replacement = anchor + '\nlocal ShipRegistry = require(ReplicatedStorage.Shared.Ship:WaitForChild("ShipRegistry"))'
+          if 'local ShipRegistry = ' not in text:
+              if anchor not in text:
+                  raise SystemExit('ShipRegistry insertion anchor not found')
+              text = text.replace(anchor, replacement, 1)
+
+          # Canonical component type lookup: no direct name heuristic in combat.
+          old = '''local function getComponentType(part)\n\tif not part or not part:IsA("BasePart") then return nil end\n\tlocal explicit = part:GetAttribute("ComponentType")\n\tif typeof(explicit) == "string" and Components.Types[explicit] then\n\t\treturn explicit\n\tend\n\tfor typeName, def in pairs(Components.Types) do\n\t\tif def.Name == part.Name then\n\t\t\treturn typeName\n\t\tend\n\tend\n\treturn nil\nend'''
+          new = '''local function getComponentType(part: BasePart): string?\n\tlocal state = ComponentAuthority.Get(part) or ComponentAuthority.Bind(part)\n\treturn state and state.TypeName or nil\nend'''
+          if old not in text:
+              raise SystemExit('Expected legacy getComponentType implementation not found')
+          text = text.replace(old, new, 1)
+
+          # Replace nearest-enemy global workspace scans with the authoritative ship registry.
+          old = '''\tfor _, obj in ipairs(workspace:GetDescendants()) do\n\t\tif obj:IsA("Model") and obj:GetAttribute("IsShip") and obj ~= ship then\n\t\t\tlocal objPos = obj.PrimaryPart and obj.PrimaryPart.Position or obj:GetPivot().Position\n\t\t\tlocal dist = (objPos - shipPos).Magnitude\n\t\t\tif dist < nearestDist then\n\t\t\t\tnearestDist = dist\n\t\t\t\tnearest = obj\n\t\t\tend\n\t\tend\n\tend'''
+          new = '''\tfor _, obj in pairs(ShipRegistry.GetAll()) do\n\t\tif obj ~= ship then\n\t\t\tlocal objPos = obj.PrimaryPart and obj.PrimaryPart.Position or obj:GetPivot().Position\n\t\t\tlocal dist = (objPos - shipPos).Magnitude\n\t\t\tif dist < nearestDist then\n\t\t\t\tnearestDist = dist\n\t\t\t\tnearest = obj\n\t\t\tend\n\t\tend\n\tend'''
+          if old not in text:
+              raise SystemExit('Expected nearest-enemy workspace scan not found')
+          text = text.replace(old, new, 1)
+
+          # Convert compatibility reads to direct authority access.
+          # Assignment forms are handled first to avoid invalid expression rewrites.
+          text = re.sub(r'partHealth\[([^\]]+)\]\s*=\s*([^\n]+)', r'ComponentAuthority.SetHealth(\1, \2)', text)
+          text = re.sub(r'partMaxHealth\[([^\]]+)\]', r'(ComponentAuthority.Get(\1) or ComponentAuthority.Bind(\1)).MaxHealth', text)
+          text = re.sub(r'partHealth\[([^\]]+)\]', r'(ComponentAuthority.Get(\1) or ComponentAuthority.Bind(\1)).Health', text)
+
+          # Ship ownership must come from ShipRegistry, not OwnerId fallback.
+          old = '''local function validateShip(player, ship)\n\tif not ship or not ship.Parent then\n\t\treturn false, "Invalid ship"\n\tend\n\tlocal ownerId = ship:GetAttribute("OwnerId")\n\tif ownerId and ownerId ~= player.UserId then\n\t\treturn false, "Ship ownership mismatch"\n\tend\n\tif not ship:GetAttribute("IsShip") then\n\t\treturn false, "Not a valid ship"\n\tend\n\treturn true\nend'''
+          new = '''local function validateShip(player: Player, ship: Model): (boolean, string?)\n\tif not ship or not ship.Parent then\n\t\treturn false, "Invalid ship"\n\tend\n\tif not ship:GetAttribute("IsShip") then\n\t\treturn false, "Not a valid ship"\n\tend\n\tif not ShipRegistry.IsOwner(player, ship) then\n\t\treturn false, "Ship ownership mismatch"\n\tend\n\treturn true\nend'''
+          if old in text:
+              text = text.replace(old, new, 1)
+
+          # Replace the broken activeShips owner lookup.
+          text = text.replace('''for player, playerShip in pairs(activeShips or {}) do''', '''for player, playerShip in pairs(ShipRegistry.GetAll()) do''')
+
+          controller.write_text(text, encoding='utf-8')
+          report.append(f'{controller}: migrated canonical authority surfaces')
+
+          # Migrate legacy scheduling APIs in live Luau without touching historical/raw text.
+          replacements = [(r'(?<!task\.)\bspawn\s*\(', 'task.spawn('),
+                          (r'(?<!task\.)\bwait\s*\(', 'task.wait('),
+                          (r'(?<!task\.)\bdelay\s*\(', 'task.delay(')]
+          for path in live:
+              s = path.read_text(encoding='utf-8')
+              original = s
+              for pat, repl in replacements:
+                  s = re.sub(pat, repl, s)
+              if s != original:
+                  path.write_text(s, encoding='utf-8')
+                  report.append(f'{path}: migrated legacy scheduling')
+
+          # Remove deprecated test artifacts if they reappear.
+          for name in ('CHATGPT_PUSH_TEST.txt', 'PUSH_TEST.md'):
+              p = root / name
+              if p.exists():
+                  p.unlink()
+                  report.append(f'{p}: removed test artifact')
+
+          # Produce a machine-readable residue report from live code.
+          live_text = '\n'.join(p.read_text(encoding='utf-8') for p in live if p.exists())
+          residues = {
+              'partHealth': len(re.findall(r'\bpartHealth\b', live_text)),
+              'partMaxHealth': len(re.findall(r'\bpartMaxHealth\b', live_text)),
+              'activeShips': len(re.findall(r'\bactiveShips\b', live_text)),
+              'legacy_spawn': len(re.findall(r'(?<!task\.)\bspawn\s*\(', live_text)),
+              'legacy_wait': len(re.findall(r'(?<!task\.)\bwait\s*\(', live_text)),
+              'legacy_delay': len(re.findall(r'(?<!task\.)\bdelay\s*\(', live_text)),
+          }
+          Path('VOIDA/MIGRATION_RESIDUE_REPORT.md').write_text(
+              '# Authority Migration Residue Report\n\n'
+              + '\n'.join(f'- {k}: {v}' for k, v in residues.items())
+              + '\n\nGenerated by the one-shot migration workflow. Raw forensic sources were excluded.\n',
+              encoding='utf-8')
+
+          if residues['partHealth'] or residues['partMaxHealth'] or residues['activeShips']:
+              raise SystemExit(f'Legacy authority residue remains: {residues}')
+
+      - name: Commit migration
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/roblox VOIDA/MIGRATION_RESIDUE_REPORT.md
+          git rm -f .github/workflows/one-shot-authority-migration.yml
+          git commit -m "chore: complete authoritative Luau migration"
+          git push origin main

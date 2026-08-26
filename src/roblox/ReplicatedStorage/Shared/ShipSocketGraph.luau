@@ -1,17 +1,19 @@
---[[
-	ShipSocketGraph: Core Socket Graph & Assembly Topology Engine.
-	Sourced from AlterOrb / FunOrb Ship Assembly Decompile & Tuned for Roblox.
-	
-	Manages:
-	  - InConnect (Sockets) and OutConnect (Plugs) matching
-	  - 7-stud standard grid and hexagonal socket transformations
-	  - Real-time WeldConstraint tree construction
-	  - BFS Root Reachability validation to sever floating/isolated components into debris
-	  - Dynamic snap solving for interactive Build Mode & Tractor Beams
-]]
+--[=[
+	ShipSocketGraph: authoritative hardpoint topology solver.
 
-local Components = require(game.ReplicatedStorage.VoidHunterComponents)
-local PhysicsConfig = require(game.ReplicatedStorage.Shared.Physics.PhysicsConfig)
+	Authority rules:
+	- Component definitions come only from VoidHunterComponents.Connections.
+	- ComponentType must be explicitly present on every graph component.
+	- Unknown component types fail closed; no invented generic sockets.
+	- Explicit ParentNodeId / ParentSocketId metadata is authoritative.
+	- Weld/proximity reconstruction is a legacy import adapter only.
+	- Roblox WeldConstraints are physical projection, not topology authority.
+]=]
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"))
 
 local ShipSocketGraph = {}
 ShipSocketGraph.__index = ShipSocketGraph
@@ -20,7 +22,7 @@ export type SocketInfo = {
 	Id: string,
 	Type: "InConnect" | "OutConnect",
 	LocalOffset: Vector3,
-	LocalDirection: Vector3, -- Outward normal vector from socket
+	LocalDirection: Vector3,
 	IsOccupied: boolean,
 	ConnectedNodeId: string?,
 	ConnectedSocketId: string?,
@@ -31,11 +33,11 @@ export type GraphNode = {
 	Part: BasePart,
 	ComponentType: string,
 	IsCore: boolean,
-	LocalCFrame: CFrame, -- Relative to Core Root
+	LocalCFrame: CFrame,
 	Sockets: { [string]: SocketInfo },
 	ParentNodeId: string?,
 	ParentSocketId: string?,
-	ChildNodes: { [string]: string }, -- SocketId -> ChildNodeId
+	ChildNodes: { [string]: string },
 }
 
 export type SnapCandidate = {
@@ -46,9 +48,45 @@ export type SnapCandidate = {
 	ChildSocketName: string,
 }
 
+local function getSocketNormal(offsetName: string): Vector3
+	if string.find(offsetName, "Front", 1, true) then
+		return Vector3.new(0, 0, 1)
+	elseif string.find(offsetName, "Back", 1, true) then
+		return Vector3.new(0, 0, -1)
+	elseif string.find(offsetName, "Left", 1, true) then
+		return Vector3.new(-1, 0, 0)
+	elseif string.find(offsetName, "Right", 1, true) then
+		return Vector3.new(1, 0, 0)
+	elseif string.find(offsetName, "Hex1", 1, true) then
+		return Vector3.new(1, 0, 0)
+	elseif string.find(offsetName, "Hex2", 1, true) then
+		return Vector3.new(0.5, 0, 0.866)
+	elseif string.find(offsetName, "Hex3", 1, true) then
+		return Vector3.new(-0.5, 0, 0.866)
+	elseif string.find(offsetName, "Hex4", 1, true) then
+		return Vector3.new(-1, 0, 0)
+	elseif string.find(offsetName, "Hex5", 1, true) then
+		return Vector3.new(-0.5, 0, -0.866)
+	elseif string.find(offsetName, "Hex", 1, true) then
+		return Vector3.new(0.5, 0, -0.866)
+	end
+	return Vector3.new(0, 0, 1)
+end
+
+local function makeSocket(id: string, socketType: "InConnect" | "OutConnect", localOffset: Vector3, localDirection: Vector3): SocketInfo
+	return {
+		Id = id,
+		Type = socketType,
+		LocalOffset = localOffset,
+		LocalDirection = localDirection,
+		IsOccupied = false,
+		ConnectedNodeId = nil,
+		ConnectedSocketId = nil,
+	}
+end
+
 function ShipSocketGraph.new(shipModel: Model?)
 	local self = setmetatable({}, ShipSocketGraph)
-
 	self.ShipModel = shipModel
 	self.Nodes = {} :: { [string]: GraphNode }
 	self.RootNodeId = nil :: string?
@@ -61,305 +99,346 @@ function ShipSocketGraph.new(shipModel: Model?)
 	return self
 end
 
------------------------------------------------------------------------------
--- SOCKET DEFINITION EXTRACTOR
------------------------------------------------------------------------------
-
-local function getSocketNormal(offsetName: string): Vector3
-	if string.find(offsetName, "Front") then
-		return Vector3.new(0, 0, 1)
-	elseif string.find(offsetName, "Back") then
-		return Vector3.new(0, 0, -1)
-	elseif string.find(offsetName, "Left") then
-		return Vector3.new(-1, 0, 0)
-	elseif string.find(offsetName, "Right") then
-		return Vector3.new(1, 0, 0)
-	elseif string.find(offsetName, "Hex1") then
-		return Vector3.new(1, 0, 0)
-	elseif string.find(offsetName, "Hex2") then
-		return Vector3.new(0.5, 0, 0.866)
-	elseif string.find(offsetName, "Hex3") then
-		return Vector3.new(-0.5, 0, 0.866)
-	elseif string.find(offsetName, "Hex4") then
-		return Vector3.new(-1, 0, 0)
-	elseif string.find(offsetName, "Hex5") then
-		return Vector3.new(-0.5, 0, -0.866)
-	elseif string.find(offsetName, "Hex") then
-		return Vector3.new(0.5, 0, -0.866)
-	end
-	return Vector3.new(0, 0, 1)
-end
-
 function ShipSocketGraph:ExtractComponentSockets(compTypeName: string): { [string]: SocketInfo }
-	local sockets: { [string]: SocketInfo } = {}
-	local connDef = Components.Connections[compTypeName]
+	local connectionDefinition = Components.Connections[compTypeName]
+	if not connectionDefinition then
+		return {}
+	end
+
 	local offsets = Components.AttachmentOffsets
+	local sockets: { [string]: SocketInfo } = {}
 
-	if not connDef then
-		-- Default generic 4-way sockets for fallback pieces
-		local defaultPositions = {
-			InConnect_Front = offsets.InConnect_Front or Vector3.new(0, 0, 3.5),
-			InConnect_Back = offsets.InConnect_Back or Vector3.new(0, 0, -3.5),
-			InConnect_Left = offsets.InConnect_Left or Vector3.new(-3.5, 0, 0),
-			InConnect_Right = offsets.InConnect_Right or Vector3.new(3.5, 0, 0),
-		}
-		for name, off in pairs(defaultPositions) do
-			sockets[name] = {
-				Id = name,
-				Type = "InConnect",
-				LocalOffset = off,
-				LocalDirection = getSocketNormal(name),
-				IsOccupied = false,
-				ConnectedNodeId = nil,
-				ConnectedSocketId = nil,
-			}
-		end
-		return sockets
-	end
-
-	-- 1. Extract InConnect sockets (female receivers)
-	if connDef.InConnectPositions then
-		for idx, posName in ipairs(connDef.InConnectPositions) do
-			local sockId = "InConnect_" .. tostring(idx) .. "_" .. posName
-			local offset = offsets[posName] or Vector3.zero
-			if connDef.MeshAttachmentPositions and connDef.MeshAttachmentPositions["InConnect_" .. idx] then
-				offset = connDef.MeshAttachmentPositions["InConnect_" .. idx]
+	if connectionDefinition.InConnectPositions then
+		for index, positionName in ipairs(connectionDefinition.InConnectPositions) do
+			local socketId = "InConnect_" .. tostring(index) .. "_" .. positionName
+			local offset = offsets[positionName]
+			if connectionDefinition.MeshAttachmentPositions then
+				offset = connectionDefinition.MeshAttachmentPositions["InConnect_" .. tostring(index)] or offset
 			end
-			sockets[sockId] = {
-				Id = sockId,
-				Type = "InConnect",
-				LocalOffset = offset,
-				LocalDirection = getSocketNormal(posName),
-				IsOccupied = false,
-				ConnectedNodeId = nil,
-				ConnectedSocketId = nil,
-			}
+			if offset then
+				sockets[socketId] = makeSocket(socketId, "InConnect", offset, getSocketNormal(positionName))
+			end
 		end
 	end
 
-	-- 2. Extract OutConnect plugs (male connectors)
-	if connDef.OutConnectPosition then
-		local posName = connDef.OutConnectPosition
-		local sockId = "OutConnect_" .. posName
-		local offset = offsets[posName] or Vector3.zero
-		if connDef.MeshAttachmentPositions and connDef.MeshAttachmentPositions.OutConnect then
-			offset = connDef.MeshAttachmentPositions.OutConnect
+	if connectionDefinition.OutConnectPosition then
+		local positionName = connectionDefinition.OutConnectPosition
+		local socketId = "OutConnect_" .. positionName
+		local offset = offsets[positionName]
+		if connectionDefinition.MeshAttachmentPositions then
+			offset = connectionDefinition.MeshAttachmentPositions.OutConnect or offset
 		end
-		sockets[sockId] = {
-			Id = sockId,
-			Type = "OutConnect",
-			LocalOffset = offset,
-			LocalDirection = -getSocketNormal(posName),
-			IsOccupied = false,
-			ConnectedNodeId = nil,
-			ConnectedSocketId = nil,
-		}
+		if offset then
+			sockets[socketId] = makeSocket(socketId, "OutConnect", offset, -getSocketNormal(positionName))
+		end
 	end
 
 	return sockets
 end
 
------------------------------------------------------------------------------
--- GRAPH INITIALIZATION FROM MODEL
------------------------------------------------------------------------------
+local function getExplicitComponentType(part: BasePart): string?
+	local componentType = part:GetAttribute("ComponentType")
+	if typeof(componentType) ~= "string" or componentType == "" then
+		return nil
+	end
+	if not Components.Types[componentType] or not Components.Connections[componentType] then
+		return nil
+	end
+	return componentType
+end
+
+local function getOrCreateNodeId(part: BasePart): string
+	local nodeId = part:GetAttribute("NodeId")
+	if typeof(nodeId) == "string" and nodeId ~= "" then
+		return nodeId
+	end
+	local generated = "node_" .. tostring(part:GetDebugId(1))
+	part:SetAttribute("NodeId", generated)
+	return generated
+end
+
+local function applyRelationshipMetadata(graph: any, node: GraphNode): boolean
+	local parentNodeId = node.Part:GetAttribute("ParentNodeId")
+	local parentSocketId = node.Part:GetAttribute("ParentSocketId")
+	if typeof(parentNodeId) ~= "string" or typeof(parentSocketId) ~= "string" then
+		return false
+	end
+
+	local parentNode = graph.Nodes[parentNodeId]
+	local parentSocket = parentNode and parentNode.Sockets[parentSocketId]
+	if not parentNode or not parentSocket or parentSocket.Type ~= "InConnect" then
+		return false
+	end
+	if parentSocket.IsOccupied then
+		return false
+	end
+
+	local childSocketId = node.Part:GetAttribute("ConnectedSocketId")
+	local childSocket = node.Sockets[typeof(childSocketId) == "string" and childSocketId or ""]
+	if not childSocket then
+		for _, candidate in pairs(node.Sockets) do
+			if candidate.Type == "OutConnect" then
+				childSocket = candidate
+				break
+			end
+		end
+	end
+	if not childSocket or childSocket.Type ~= "OutConnect" then
+		return false
+	end
+
+	parentSocket.IsOccupied = true
+	parentSocket.ConnectedNodeId = node.Id
+	parentSocket.ConnectedSocketId = childSocket.Id
+	childSocket.IsOccupied = true
+	childSocket.ConnectedNodeId = parentNode.Id
+	childSocket.ConnectedSocketId = parentSocket.Id
+
+	parentNode.ChildNodes[parentSocket.Id] = node.Id
+	node.ParentNodeId = parentNode.Id
+	node.ParentSocketId = parentSocket.Id
+	return true
+end
 
 function ShipSocketGraph:RebuildFromModel(shipModel: Model)
 	self.ShipModel = shipModel
 	self.Nodes = {}
 	self.RootNodeId = nil
 
-	-- 1. Identify Root Core
-	local corePart = shipModel.PrimaryPart
-	if not corePart then
-		for _, desc in ipairs(shipModel:GetDescendants()) do
-			if desc:IsA("BasePart") and desc:GetAttribute("IsCore") then
-				corePart = desc
-				shipModel.PrimaryPart = desc
-				break
+	local corePart: BasePart? = nil
+	for _, descendant in ipairs(shipModel:GetDescendants()) do
+		if descendant:IsA("BasePart") and not descendant:GetAttribute("IsDebris") then
+			if descendant:GetAttribute("IsCore") == true then
+				local componentType = getExplicitComponentType(descendant)
+				if componentType then
+					corePart = descendant
+					break
+				end
 			end
 		end
 	end
-	corePart = corePart or shipModel:FindFirstChildWhichIsA("BasePart")
-	if not corePart then return end
 
-	local coreTypeName = corePart:GetAttribute("ComponentType") or corePart.Name
+	if not corePart then
+		local primaryPart = shipModel.PrimaryPart
+		if primaryPart and primaryPart:IsA("BasePart") and primaryPart:GetAttribute("IsCore") == true and getExplicitComponentType(primaryPart) then
+			corePart = primaryPart
+		end
+	end
+
+	if not corePart then
+		return
+	end
+
+	shipModel.PrimaryPart = corePart
+
+	local rootType = getExplicitComponentType(corePart)
+	if not rootType then
+		return
+	end
+
+	local rootId = getOrCreateNodeId(corePart)
 	local rootNode: GraphNode = {
-		Id = corePart:GetAttribute("NodeId") or ("node_" .. corePart.Name .. "_" .. tostring(math.random(1000, 9999))),
+		Id = rootId,
 		Part = corePart,
-		ComponentType = coreTypeName,
+		ComponentType = rootType,
 		IsCore = true,
 		LocalCFrame = CFrame.identity,
-		Sockets = self:ExtractComponentSockets(coreTypeName),
+		Sockets = self:ExtractComponentSockets(rootType),
 		ParentNodeId = nil,
 		ParentSocketId = nil,
 		ChildNodes = {},
 	}
-	corePart:SetAttribute("NodeId", rootNode.Id)
-	self.Nodes[rootNode.Id] = rootNode
-	self.RootNodeId = rootNode.Id
+	self.Nodes[rootId] = rootNode
+	self.RootNodeId = rootId
 
-	-- 2. Index all other attached parts
-	local rootCF = corePart.CFrame
+	local rootCFrame = corePart.CFrame
 	for _, part in ipairs(shipModel:GetDescendants()) do
 		if part:IsA("BasePart") and part ~= corePart and not part:GetAttribute("IsDebris") then
-			local compType = part:GetAttribute("ComponentType") or part.Name
-			local nodeId = part:GetAttribute("NodeId") or ("node_" .. part.Name .. "_" .. tostring(math.random(1000, 9999)))
-			part:SetAttribute("NodeId", nodeId)
-
-			local node: GraphNode = {
-				Id = nodeId,
-				Part = part,
-				ComponentType = compType,
-				IsCore = false,
-				LocalCFrame = rootCF:ToObjectSpace(part.CFrame),
-				Sockets = self:ExtractComponentSockets(compType),
-				ParentNodeId = nil,
-				ParentSocketId = nil,
-				ChildNodes = {},
-			}
-			self.Nodes[nodeId] = node
-		end
-	end
-
-	-- 3. Resolve existing WeldConstraints into graph edges
-	self:ResolveExistingWelds()
-end
-
-function ShipSocketGraph:ResolveExistingWelds()
-	for _, node in pairs(self.Nodes) do
-		if node.Part then
-			for _, child in ipairs(node.Part:GetChildren()) do
-				if child:IsA("WeldConstraint") and child.Part0 and child.Part1 then
-					local otherPart = (child.Part0 == node.Part) and child.Part1 or child.Part0
-					local otherNodeId = otherPart:GetAttribute("NodeId")
-					local otherNode = otherNodeId and self.Nodes[otherNodeId]
-					if otherNode then
-						-- Mark as connected in graph
-						self:PairSocketsByProximity(node, otherNode)
-					end
-				end
+			local componentType = getExplicitComponentType(part)
+			if componentType then
+				local nodeId = getOrCreateNodeId(part)
+				self.Nodes[nodeId] = {
+					Id = nodeId,
+					Part = part,
+					ComponentType = componentType,
+					IsCore = false,
+					LocalCFrame = rootCFrame:ToObjectSpace(part.CFrame),
+					Sockets = self:ExtractComponentSockets(componentType),
+					ParentNodeId = nil,
+					ParentSocketId = nil,
+					ChildNodes = {},
+				}
 			end
 		end
 	end
+
+	local explicitLinkedNodes: { [string]: boolean } = {}
+	for nodeId, node in pairs(self.Nodes) do
+		if nodeId ~= self.RootNodeId and applyRelationshipMetadata(self, node) then
+			explicitLinkedNodes[nodeId] = true
+		end
+	end
+
+	-- Legacy physical migration adapter: only consider existing welds for nodes
+	-- that have no explicit relationship metadata. The weld never invents a new
+	-- component or socket; it can only confirm an unambiguous existing pair.
+	for nodeId, node in pairs(self.Nodes) do
+		if nodeId ~= self.RootNodeId and not explicitLinkedNodes[nodeId] then
+			self:ResolveLegacyWeldEvidence(node)
+		end
+	end
 end
 
-function ShipSocketGraph:PairSocketsByProximity(nodeA: GraphNode, nodeB: GraphNode)
+function ShipSocketGraph:ResolveLegacyWeldEvidence(node: GraphNode)
+	local part = node.Part
+	if not part then
+		return
+	end
+
+	for _, child in ipairs(part:GetChildren()) do
+		if not child:IsA("WeldConstraint") then
+			continue
+		end
+		local otherPart = nil
+		if child.Part0 == part then
+			otherPart = child.Part1
+		elseif child.Part1 == part then
+			otherPart = child.Part0
+		end
+		if not otherPart or not otherPart:IsDescendantOf(self.ShipModel) then
+			continue
+		end
+		local otherNodeId = otherPart:GetAttribute("NodeId")
+		if typeof(otherNodeId) ~= "string" then
+			continue
+		end
+		local otherNode = self.Nodes[otherNodeId]
+		if not otherNode then
+			continue
+		end
+		self:PairSocketsByProximity(node, otherNode)
+		break
+	end
+end
+
+function ShipSocketGraph:PairSocketsByProximity(nodeA: GraphNode, nodeB: GraphNode): boolean
+	if not nodeA or not nodeB or nodeA == nodeB then
+		return false
+	end
 	local partA = nodeA.Part
 	local partB = nodeB.Part
-	if not partA or not partB then return end
+	if not partA or not partB then
+		return false
+	end
 
-	local bestDist = 3.0 -- Stud tolerance
-	local bestSockA = nil
-	local bestSockB = nil
+	local bestDistance = 3.0
+	local bestSocketA: SocketInfo? = nil
+	local bestSocketB: SocketInfo? = nil
 
-	for sockIdA, sockA in pairs(nodeA.Sockets) do
-		local worldPosA = partA.CFrame:PointToWorldSpace(sockA.LocalOffset)
-		for sockIdB, sockB in pairs(nodeB.Sockets) do
-			if sockA.Type ~= sockB.Type then
-				local worldPosB = partB.CFrame:PointToWorldSpace(sockB.LocalOffset)
-				local dist = (worldPosA - worldPosB).Magnitude
-				if dist < bestDist then
-					bestDist = dist
-					bestSockA = sockA
-					bestSockB = sockB
-				end
+	for _, socketA in pairs(nodeA.Sockets) do
+		if socketA.IsOccupied then
+			continue
+		end
+		local worldA = partA.CFrame:PointToWorldSpace(socketA.LocalOffset)
+		for _, socketB in pairs(nodeB.Sockets) do
+			if socketB.IsOccupied or socketA.Type == socketB.Type then
+				continue
+			end
+			local worldB = partB.CFrame:PointToWorldSpace(socketB.LocalOffset)
+			local distance = (worldA - worldB).Magnitude
+			if distance < bestDistance then
+				bestDistance = distance
+				bestSocketA = socketA
+				bestSocketB = socketB
 			end
 		end
 	end
 
-	if bestSockA and bestSockB then
-		bestSockA.IsOccupied = true
-		bestSockA.ConnectedNodeId = nodeB.Id
-		bestSockA.ConnectedSocketId = bestSockB.Id
-
-		bestSockB.IsOccupied = true
-		bestSockB.ConnectedNodeId = nodeA.Id
-		bestSockB.ConnectedSocketId = bestSockA.Id
-
-		if bestSockA.Type == "InConnect" and bestSockB.Type == "OutConnect" then
-			nodeA.ChildNodes[bestSockA.Id] = nodeB.Id
-			nodeB.ParentNodeId = nodeA.Id
-			nodeB.ParentSocketId = bestSockA.Id
-		elseif bestSockB.Type == "InConnect" and bestSockA.Type == "OutConnect" then
-			nodeB.ChildNodes[bestSockB.Id] = nodeA.Id
-			nodeA.ParentNodeId = nodeB.Id
-			nodeA.ParentSocketId = bestSockB.Id
-		end
+	if not bestSocketA or not bestSocketB then
+		return false
 	end
+
+	bestSocketA.IsOccupied = true
+	bestSocketA.ConnectedNodeId = nodeB.Id
+	bestSocketA.ConnectedSocketId = bestSocketB.Id
+	bestSocketB.IsOccupied = true
+	bestSocketB.ConnectedNodeId = nodeA.Id
+	bestSocketB.ConnectedSocketId = bestSocketA.Id
+
+	if bestSocketA.Type == "InConnect" and bestSocketB.Type == "OutConnect" then
+		nodeA.ChildNodes[bestSocketA.Id] = nodeB.Id
+		nodeB.ParentNodeId = nodeA.Id
+		nodeB.ParentSocketId = bestSocketA.Id
+	elseif bestSocketB.Type == "InConnect" and bestSocketA.Type == "OutConnect" then
+		nodeB.ChildNodes[bestSocketB.Id] = nodeA.Id
+		nodeA.ParentNodeId = nodeB.Id
+		nodeA.ParentSocketId = bestSocketB.Id
+	else
+		return false
+	end
+
+	return true
 end
 
------------------------------------------------------------------------------
--- SNAP SOLVER FOR BUILD MODE & TRACTOR BEAM
------------------------------------------------------------------------------
-
 function ShipSocketGraph:FindBestSnap(heldPart: BasePart, compTypeName: string, maxSnapDist: number?): SnapCandidate?
+	if not heldPart or not heldPart.Parent then
+		return nil
+	end
+	if not Components.Types[compTypeName] or not Components.Connections[compTypeName] then
+		return nil
+	end
+
 	local snapRadius = maxSnapDist or Components.SNAP_DISTANCE or 6.0
 	local heldSockets = self:ExtractComponentSockets(compTypeName)
-	local heldCF = heldPart.CFrame
+	local outPlugName: string? = nil
+	local outPlug: SocketInfo? = nil
 
-	-- Find any OutConnect plug on held part (plugs connect into ship sockets)
-	local outPlugName = nil
-	local outPlug = nil
-	for sName, sData in pairs(heldSockets) do
-		if sData.Type == "OutConnect" then
-			outPlugName = sName
-			outPlug = sData
+	for socketName, socketData in pairs(heldSockets) do
+		if socketData.Type == "OutConnect" then
+			outPlugName = socketName
+			outPlug = socketData
 			break
 		end
 	end
-
-	-- If piece has no OutConnect (e.g. symmetrical hull blocks), fallback to first InConnect
-	if not outPlug then
-		for sName, sData in pairs(heldSockets) do
-			outPlugName = sName
-			outPlug = sData
-			break
-		end
+	if not outPlug or not outPlugName then
+		return nil
 	end
-
-	if not outPlug then return nil end
 
 	local bestCandidate: SnapCandidate? = nil
 	local closestDistance = snapRadius
 
 	for _, parentNode in pairs(self.Nodes) do
-		if parentNode.Part and parentNode.Part:IsDescendantOf(workspace) then
-			local parentCF = parentNode.Part.CFrame
-			for parentSockId, parentSock in pairs(parentNode.Sockets) do
-				-- Sockets only receive if not occupied and female (InConnect)
-				if not parentSock.IsOccupied and (parentSock.Type == "InConnect" or not parentNode.IsCore) then
-					local worldSocketPos = parentCF:PointToWorldSpace(parentSock.LocalOffset)
-					local dist = (heldPart.Position - worldSocketPos).Magnitude
+		if parentNode.Part and parentNode.Part:IsDescendantOf(Workspace) then
+			for _, parentSocket in pairs(parentNode.Sockets) do
+				if parentSocket.IsOccupied or parentSocket.Type ~= "InConnect" then
+					continue
+				end
+				local socketPosition = parentNode.Part.CFrame:PointToWorldSpace(parentSocket.LocalOffset)
+				local distance = (heldPart.Position - socketPosition).Magnitude
+				if distance >= closestDistance then
+					continue
+				end
 
-					if dist < closestDistance then
-						-- Compute target CFrame that aligns held plug directly with parent socket
-						local targetSocketPos = worldSocketPos
-						local targetRotation = parentCF - parentCF.Position
-						
-						-- Invert direction for plug-to-socket mate
-						local targetCF = CFrame.new(targetSocketPos) * targetRotation
-						local finalPartCF = targetCF * CFrame.new(-outPlug.LocalOffset)
+				local targetRotation = parentNode.Part.CFrame - parentNode.Part.CFrame.Position
+				local targetSocketCFrame = CFrame.new(socketPosition) * targetRotation
+				local finalPartCFrame = targetSocketCFrame * CFrame.new(-outPlug.LocalOffset)
 
-						-- Check for collision / overlap with existing nodes
-						local hasOverlap = false
-						for _, otherNode in pairs(self.Nodes) do
-							if otherNode.Part and (otherNode.Part.Position - finalPartCF.Position).Magnitude < 3.0 then
-								hasOverlap = true
-								break
-							end
-						end
-
-						if not hasOverlap then
-							closestDistance = dist
-							bestCandidate = {
-								ParentNode = parentNode,
-								ParentSocket = parentSock,
-								TargetCFrame = finalPartCF,
-								Distance = dist,
-								ChildSocketName = outPlugName,
-							}
-						end
+				local overlapsExisting = false
+				for _, otherNode in pairs(self.Nodes) do
+					if otherNode.Part and (otherNode.Part.Position - finalPartCFrame.Position).Magnitude < 3.0 then
+						overlapsExisting = true
+						break
 					end
+				end
+				if not overlapsExisting then
+					closestDistance = distance
+					bestCandidate = {
+						ParentNode = parentNode,
+						ParentSocket = parentSocket,
+						TargetCFrame = finalPartCFrame,
+						Distance = distance,
+						ChildSocketName = outPlugName,
+					}
 				end
 			end
 		end
@@ -368,17 +447,25 @@ function ShipSocketGraph:FindBestSnap(heldPart: BasePart, compTypeName: string, 
 	return bestCandidate
 end
 
------------------------------------------------------------------------------
--- ATTACH & DETACH PIPELINE
------------------------------------------------------------------------------
-
 function ShipSocketGraph:AttachComponent(parentNode: GraphNode, parentSocket: SocketInfo, childPart: BasePart, compTypeName: string): GraphNode?
-	if not parentNode or not parentNode.Part or not childPart then return nil end
+	if not parentNode or not parentNode.Part or not parentSocket or not childPart then
+		return nil
+	end
+	if parentSocket.Type ~= "InConnect" or parentSocket.IsOccupied then
+		return nil
+	end
+	if not Components.Types[compTypeName] or not Components.Connections[compTypeName] then
+		return nil
+	end
+	if childPart:IsDescendantOf(self.ShipModel) and childPart:GetAttribute("NodeId") then
+		return nil
+	end
 
-	-- 1. Create child node
-	local childNodeId = "node_" .. compTypeName .. "_" .. tostring(math.random(10000, 99999))
+	local childNodeId = "node_" .. tostring(childPart:GetDebugId(1))
 	childPart:SetAttribute("NodeId", childNodeId)
 	childPart:SetAttribute("ComponentType", compTypeName)
+	childPart:SetAttribute("ParentNodeId", parentNode.Id)
+	childPart:SetAttribute("ParentSocketId", parentSocket.Id)
 	childPart:SetAttribute("IsDebris", nil)
 
 	local childSockets = self:ExtractComponentSockets(compTypeName)
@@ -394,23 +481,29 @@ function ShipSocketGraph:AttachComponent(parentNode: GraphNode, parentSocket: So
 		ChildNodes = {},
 	}
 
-	-- 2. Establish bidirectional socket linkage
-	parentSocket.IsOccupied = true
-	parentSocket.ConnectedNodeId = childNodeId
-	parentNode.ChildNodes[parentSocket.Id] = childNodeId
-
-	-- Find matching plug on child
-	for cSockId, cSock in pairs(childSockets) do
-		if cSock.Type == "OutConnect" then
-			cSock.IsOccupied = true
-			cSock.ConnectedNodeId = parentNode.Id
-			cSock.ConnectedSocketId = parentSocket.Id
-			parentSocket.ConnectedSocketId = cSockId
+	local childSocket: SocketInfo? = nil
+	for _, socket in pairs(childSockets) do
+		if socket.Type == "OutConnect" then
+			childSocket = socket
 			break
 		end
 	end
+	if not childSocket then
+		childPart:SetAttribute("NodeId", nil)
+		childPart:SetAttribute("ParentNodeId", nil)
+		childPart:SetAttribute("ParentSocketId", nil)
+		return nil
+	end
 
-	-- 3. Create WeldConstraint
+	parentSocket.IsOccupied = true
+	parentSocket.ConnectedNodeId = childNodeId
+	parentSocket.ConnectedSocketId = childSocket.Id
+	childSocket.IsOccupied = true
+	childSocket.ConnectedNodeId = parentNode.Id
+	childSocket.ConnectedSocketId = parentSocket.Id
+	childPart:SetAttribute("ConnectedSocketId", childSocket.Id)
+	parentNode.ChildNodes[parentSocket.Id] = childNodeId
+
 	childPart.Anchored = false
 	childPart.CanCollide = true
 	childPart.Parent = self.ShipModel
@@ -425,136 +518,102 @@ function ShipSocketGraph:AttachComponent(parentNode: GraphNode, parentSocket: So
 	return childNode
 end
 
------------------------------------------------------------------------------
--- BFS ROOT REACHABILITY & SEVERANCE ENGINE (AlterOrb Mechanic)
------------------------------------------------------------------------------
-
 function ShipSocketGraph:ValidateReachability(): { Reachable: { [string]: GraphNode }, Severed: { [string]: GraphNode } }
 	local reachable: { [string]: GraphNode } = {}
 	local severed: { [string]: GraphNode } = {}
-
 	if not self.RootNodeId or not self.Nodes[self.RootNodeId] then
-		-- Entire ship is lost
 		for id, node in pairs(self.Nodes) do
 			severed[id] = node
 		end
 		return { Reachable = reachable, Severed = severed }
 	end
 
-	-- BFS Traversal from Root Core
-	local queue = { self.RootNodeId }
+	local queue: { string } = { self.RootNodeId }
+	local head = 1
 	reachable[self.RootNodeId] = self.Nodes[self.RootNodeId]
 
-	while #queue > 0 do
-		local currentId = table.remove(queue, 1)
+	while head <= #queue do
+		local currentId = queue[head]
+		head += 1
 		local currentNode = self.Nodes[currentId]
-
-		if currentNode and currentNode.Part and currentNode.Part.Parent then
-			-- Inspect all active connections on this node
+		if currentNode then
 			for _, socket in pairs(currentNode.Sockets) do
-				if socket.IsOccupied and socket.ConnectedNodeId then
-					local neighborId = socket.ConnectedNodeId
-					local neighborNode = self.Nodes[neighborId]
-					
-					-- Verify physical weld integrity
-					local hasWeld = false
-					if neighborNode and neighborNode.Part then
-						for _, child in ipairs(neighborNode.Part:GetChildren()) do
-							if child:IsA("WeldConstraint") and (child.Part0 == currentNode.Part or child.Part1 == currentNode.Part) then
-								hasWeld = true
-								break
-							end
-						end
-						if not hasWeld then
-							for _, child in ipairs(currentNode.Part:GetChildren()) do
-								if child:IsA("WeldConstraint") and (child.Part0 == neighborNode.Part or child.Part1 == neighborNode.Part) then
-									hasWeld = true
-									break
-								end
-							end
-						end
-					end
-
-					if hasWeld and not reachable[neighborId] then
-						reachable[neighborId] = neighborNode
-						table.insert(queue, neighborId)
-					end
+				local neighborId = socket.ConnectedNodeId
+				if socket.IsOccupied and neighborId and self.Nodes[neighborId] and not reachable[neighborId] then
+					reachable[neighborId] = self.Nodes[neighborId]
+					queue[#queue + 1] = neighborId
 				end
 			end
 		end
 	end
 
-	-- All unvisited nodes in the graph are severed debris
 	for id, node in pairs(self.Nodes) do
 		if not reachable[id] then
 			severed[id] = node
 		end
 	end
-
 	return { Reachable = reachable, Severed = severed }
 end
 
--- Severs all disconnected components, frees welds, and assigns 2D debris drift
 function ShipSocketGraph:SeverUnreachableComponents(debrisFolder: Instance?): { BasePart }
 	local result = self:ValidateReachability()
 	local severedParts: { BasePart } = {}
-	local targetParent = debrisFolder or workspace
+	local targetParent = debrisFolder or Workspace
 
-	for severedId, node in pairs(result.Severed) do
+	for nodeId, node in pairs(result.Severed) do
 		local part = node.Part
 		if part and part.Parent then
-			-- 1. Break all Welds
-			for _, desc in ipairs(part:GetDescendants()) do
-				if desc:IsA("WeldConstraint") then
-					desc:Destroy()
+			for _, descendant in ipairs(part:GetDescendants()) do
+				if descendant:IsA("WeldConstraint") then
+					descendant:Destroy()
 				end
 			end
-
-			-- 2. Mark as independent debris
 			part:SetAttribute("IsDebris", true)
 			part:SetAttribute("NodeId", nil)
+			part:SetAttribute("ParentNodeId", nil)
+			part:SetAttribute("ParentSocketId", nil)
 			part.Parent = targetParent
 			part.Anchored = false
 			part.CanCollide = true
 
-			-- 3. Impart outward sever impulse
-			local outwardDir = (part.Position - (self.ShipModel and self.ShipModel:GetPivot().Position or part.Position)).Unit
-			part.AssemblyLinearVelocity = Vector3.new(outwardDir.X * 15, 0, outwardDir.Z * 15)
+			local origin = self.ShipModel and self.ShipModel:GetPivot().Position or part.Position
+			local delta = part.Position - origin
+			local outward = delta.Magnitude > 0.001 and delta.Unit or Vector3.new(1, 0, 0)
+			part.AssemblyLinearVelocity = Vector3.new(outward.X * 15, 0, outward.Z * 15)
 			part.AssemblyAngularVelocity = Vector3.new(0, math.random(-5, 5), 0)
-
-			table.insert(severedParts, part)
+			severedParts[#severedParts + 1] = part
 		end
-		-- Remove from active topology graph
-		self.Nodes[severedId] = nil
+		self.Nodes[nodeId] = nil
 	end
 
 	return severedParts
 end
 
------------------------------------------------------------------------------
--- SERIALIZATION & BLUEPRINT RECONSTRUCTION
------------------------------------------------------------------------------
-
 function ShipSocketGraph:Serialize(): any
+	local rootNode = self.RootNodeId and self.Nodes[self.RootNodeId]
+	local rootCFrame = rootNode and rootNode.Part and rootNode.Part.CFrame or CFrame.identity
 	local blueprint = {
-		RootType = self.RootNodeId and self.Nodes[self.RootNodeId] and self.Nodes[self.RootNodeId].ComponentType or "CommandCore",
+		RootType = rootNode and rootNode.ComponentType or nil,
 		Pieces = {},
 	}
 
-	local rootNode = self.RootNodeId and self.Nodes[self.RootNodeId]
-	local rootCF = rootNode and rootNode.Part and rootNode.Part.CFrame or CFrame.identity
+	if not blueprint.RootType then
+		return blueprint
+	end
 
 	for id, node in pairs(self.Nodes) do
 		if node.Part then
-			local relCF = rootCF:ToObjectSpace(node.Part.CFrame)
-			table.insert(blueprint.Pieces, {
+			local relative = rootCFrame:ToObjectSpace(node.Part.CFrame)
+			local rx, ry, rz = relative:ToEulerAnglesYXZ()
+			blueprint.Pieces[#blueprint.Pieces + 1] = {
 				Id = id,
 				Type = node.ComponentType,
 				IsCore = node.IsCore,
-				Position = { X = relCF.Position.X, Y = relCF.Position.Y, Z = relCF.Position.Z },
-				Rotation = { X = relCF:ToEulerAnglesYXZ() },
+				Position = { X = relative.Position.X, Y = relative.Position.Y, Z = relative.Position.Z },
+				Rotation = { X = rx, Y = ry, Z = rz },
+				ParentNodeId = node.ParentNodeId,
 				ParentSocketId = node.ParentSocketId,
-			})
+			}
 		end
 	end
 

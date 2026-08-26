@@ -1,56 +1,65 @@
 # VOIDA Runtime Audit Actions — 2026-08-26
 
-## Completed in this audit
+## Authority order
+1. `VOIDA/00_FORENSIC_ENGINEER_BLUEPRINT.md` — authoritative first-pass forensic contract.
+2. `AGENTS.md` — implementation and authority rules.
+3. `VOIDA/09_AUTHORITY_CENSUS.md` — repository authority findings/deltas.
+4. `VOIDA/10_ROBLOX_LUAU_REFERENCE.md` — Roblox/Luau implementation reference.
+
+## Completed
 
 ### Structural authority
-- `ComponentAuthority` is the logical component state boundary.
-- `StructuralAuthority` is the structural mutation boundary.
-- Detached subtrees remain live in `Workspace.VoidHunterDebris`.
-- Graph traversal uses head-index BFS rather than repeated front deletion.
-- Replacement has an explicit failure/recovery path rather than silent destruction.
+- `ComponentAuthority` = canonical component runtime state.
+- `StructuralAuthority` = canonical structural mutation boundary.
+- `ShipRegistry` = canonical player/ship lifecycle relationship.
+- Detached subtrees remain live physical assemblies unless recovered source behavior says otherwise.
+
+### Ship lifecycle
+- `VoidHunterShipSpawner` no longer owns legacy `partHealth` / `partMaxHealth` maps.
+- Ship lifecycle uses `ShipRegistry` and `TeamIdentity`.
+- Old fabricated clone/scatter salvage logic was removed from the spawner.
 
 ### Blueprint persistence
-- Blueprint payload is now V2 and DataStore-safe.
-- CFrame is serialized into primitive position/orientation numbers.
-- Loader accepts V2 plus older `parts`/`Components` layouts.
-- Builder no longer directly persists userdata/CFrame values.
-- AutoBuild routes final attachment through `StructuralAuthority`.
+- Blueprint V2 uses primitive-only DataStore payloads.
+- AutoBuild routes attachment through `StructuralAuthority`.
+- Legacy `Components` input remains a migration input only; new saves use V2.
 
 ### Provenance
-- Shield prototype values are explicitly `[INFERRED]`.
-- Arena MatchState is explicitly prototype/partial parity.
-- ForensicDataModel is treated as mixed recovered/derived data; do not trust file-level verification labels blindly.
+- Inferred shield/capacitor values remain explicitly `[INFERRED]`.
+- Arena remains prototype/partial parity.
+- The authoritative first-pass blueprint forbids guessing unrecovered data.
 
-### Team identity
-- Arena prototype uses Yellow / Blue.
-- Component category colors remain separate from team identity.
+## Remaining P0
 
-## Remaining P0 implementation work
+1. Remove remaining `partHealth` / `partMaxHealth` compatibility access from combat after callers are migrated to `ComponentAuthority` directly.
+2. Replace generic socket fallback with authoritative hardpoints; unknown definitions fail closed.
+3. Make replacement atomic at the hardpoint/graph level.
+4. Recover exact detach force, momentum carry-over, debris persistence, and cleanup semantics before inventing policy.
+5. Recover exact `anb` mass/COM/inertia/update equations before parity claims.
+6. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
+7. Port MissionCondition/MissionAction instead of expanding Arena-only orchestration.
 
-1. Migrate ALL combat HP callers off legacy `partHealth` / `partMaxHealth` maps.
-2. Replace type-name heuristics with `ComponentAuthority`/component definitions.
-3. Replace generic socket fallback for production component types with authoritative hardpoint definitions.
-4. Recover exact original replacement semantics and implement atomic same-hardpoint replacement.
-5. Recover exact original detach impulse/force and debris cleanup/persistence before adding any cleanup policy.
-6. Recover exact `anb` integration/mass/COM/inertia equations before calling custom Roblox physics parity verified.
-7. Recover exact shield and energy behaviour consumers.
-8. Port MissionCondition/MissionAction framework rather than expanding Arena-specific logic.
+## Remaining P1
 
-## Remaining P1 code-quality work
-
-- Remove `_G` dependencies after explicit ModuleScript wiring exists.
-- Replace high-speed projectile `Touched` paths with the existing swept ballistic solver where appropriate.
-- Ensure all remote handlers validate ownership, installation state, finite numeric input and legal state transitions.
-- Audit connection cleanup on Ship/Player/Projectile destruction.
-- Replace repeated `workspace:GetDescendants()` scans in hot loops with indexed collections/spatial queries.
+- Remove `_G` compatibility bridges as explicit ModuleScript wiring replaces them.
+- Prefer `BallisticsEngine`/swept collision for projectile classes where source behavior supports it.
+- Validate remote ownership, installation, finite numeric input, and legal state transitions.
+- Audit lifecycle connection cleanup.
+- Replace hot-loop `workspace:GetDescendants()` scans with indexed registries/spatial queries.
 - Verify all DataStore schemas are primitive-only and versioned.
 
 ## Future-agent protocol
 
-Read this file first when continuing runtime audit. Only work on the highest unresolved item.
-Do not reopen a completed item unless new source evidence contradicts it.
+Read `VOIDA/00_FORENSIC_ENGINEER_BLUEPRINT.md` first. Work only on the highest unresolved item. Do not reopen a completed item unless new source evidence contradicts it.
 
-For each fix, record:
-SOURCE → OLD → NEW → TEST → STATUS
+For each fix:
+
+```text
+SOURCE:
+OLD:
+NEW:
+TEST:
+STATUS:
+```
 
 END

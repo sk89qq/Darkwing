@@ -82,18 +82,23 @@ Do not add subsystem-local authoritative copies.
 - Roblox API hygiene sweep found no indexed `BodyVelocity`, `wait(`, `delay(`, or `tick(` legacy usage.
 - `NativeDebrisPhysics` preserves the recovered native debris-launch equation structure without inventing unresolved caller scale.
 - Grapple lifecycle infrastructure exists as a Roblox-native state machine boundary; unresolved native constants/target-eligibility semantics remain isolated rather than guessed.
-- `VOIDA/00_SOURCE_INDEX.md` indexes the numbered VOIDA source/audit corpus and establishes its navigation/authority rules.
+- `VOIDA/00_SOURCE_INDEX.md` indexes the numbered VOIDA forensic/audit corpus and establishes its navigation/authority rules.
+- `VOIDA/31_COMPONENT_56_SLOT_RECONCILIATION.md` records the native 56-slot component-definition reconciliation scope.
+- `VOIDA/32_NATIVE_COMPONENT_SLOT_MATRIX.md` records the currently extracted native geometry slots and unresolved/generated ranges.
+- `ComponentConnectionAudit` is a read-only validator for live connector declaration/array mismatches; it does not silently alter definitions.
 
 ## Raw-source corrections from this pass
-1. `wlb.java` directly initializes `hab.g` as 56 component-definition slots.
-2. Only a subset of those slots are literal polygons in the decompiled initializer; many are generated from dependent chassis expressions. Those generated slots must not be replaced by guessed literals.
-3. `wfb.java` derives health through `lw.a(..., u)`; the repository's simplified `sqrt(area) * z / 64` helper is not sufficient to call the exact transformation raw-verified.
-4. `summary.txt` records CFR gaps in major methods. Those methods remain `RAW-GAP` until recovered from bytecode or a better decompilation.
-5. Existing `ForensicDataModel` entries that were synthesized before the raw package was available must be treated as provisional unless they can be traced directly to raw source.
-6. Raw `nbb` debris transfer behavior has now been directly recovered: the debris specialization receives native transient motion quantities from its source body and clears those source accumulators. The Roblox port mirrors the recovered inherited kinematic state through `RigidBody2D`.
-7. The raw `ml.DA` debris path also applies a separate launch term after state inheritance. Its geometric/random structure is recovered; caller-specific scale remains isolated until the source context is fully mapped.
-8. `nbb.e(false)` resolves to inherited `anb.s`, the native body-mass field.
-9. Blueprint component identity is explicitly persisted as `BlueprintComponent.Id`; hardpoint IDs remain separate and runtime `ComponentId` values are never substituted for persistence identity.
+1. `wlb.java` directly initializes `hab.g` as 56 component-definition slots (`0..55`).
+2. The current qualitative forensic corpus directly documents 22 native static/component slots; this corrects the earlier informal count of 19.
+3. Only a subset of those slots are literal polygons in the decompiled initializer; many are generated from dependent chassis expressions. Those generated slots must not be replaced by guessed literals.
+4. `wfb.java` derives health through `lw.a(..., u)`; the repository's simplified `sqrt(area) * z / 64` helper is not sufficient to call the exact transformation raw-verified.
+5. `summary.txt` records CFR gaps in major methods. Those methods remain `RAW-GAP` until recovered from bytecode or a better decompilation.
+6. Existing `ForensicDataModel` entries that were synthesized before the raw package was available must be treated as provisional unless they can be traced directly to raw source.
+7. Raw `nbb` debris transfer behavior has now been directly recovered: the debris specialization receives native transient motion quantities from its source body and clears those source accumulators. The Roblox port mirrors the recovered inherited kinematic state through `RigidBody2D`.
+8. The raw `ml.DA` debris path also applies a separate launch term after state inheritance. Its geometric/random structure is recovered; caller-specific scale remains isolated until the source context is fully mapped.
+9. `nbb.e(false)` resolves to inherited `anb.s`, the native body-mass field.
+10. Blueprint component identity is explicitly persisted as `BlueprintComponent.Id`; hardpoint IDs remain separate and runtime `ComponentId` values are never substituted for persistence identity.
+11. The raw source explicitly preserves unusual connector cases; internal Roblox connector declaration mismatches must not be auto-corrected without raw evidence.
 
 ## Remaining P0
 1. **BLOCKED:** recover the exact source caller mapping for the `ml.DA` launch scalar `n2` in every destruction context. Do not map it to damage/HP/mass/force by inference.
@@ -104,6 +109,7 @@ Do not add subsystem-local authoritative copies.
 6. Prove all externally referenced compatibility facades have no remaining live callers, then delete `VoidHunterBlueprintSystem` and `VoidHunterSyncManager` rather than retaining unnecessary compatibility surface.
 7. **IMPLEMENTED / PARTIAL:** Blueprint V2 validation, staging, transactional structural commit, and builder integration are complete at source level. Roblox Studio acceptance and legacy datastore migration remain pending.
 8. **PARTIAL:** grapple constants and exact target-eligibility behavior are known by parameter name/state strings but not fully backed by recovered method bodies in the currently indexed raw corpus.
+9. **ACTIVE:** native 56-slot component reconciliation. Static slots documented in VOIDA can be mapped only when their Roblox identity is supported by source evidence; generated/special ranges require direct initializer recovery.
 
 ## Mission/network lookahead status
 - Mission framework infrastructure: `IMPLEMENTED / PARTIAL`.
@@ -141,5 +147,8 @@ STATUS:
 - VERIFIED
 - BLOCKED
 - SUPERSEDED
+- RAW-GAP
+- ROBLOX-MAPPING
+- INFERRED
 
 END AUDIT

@@ -10,8 +10,8 @@
 	- Newly created Roblox parts receive runtime ComponentId values through
 	  ComponentAuthority.
 	- Every topology mutation flows through StructuralAuthority.
-	- The target ship is not mutated until all staged components and parent/
-	  hardpoint references have been validated.
+	- Staging occurs outside the target ship until schema/topology validation passes.
+	- The structural commit runs inside StructuralAuthority.RunTransaction().
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -28,11 +28,6 @@ export type ComponentFactory = (componentType: string, logicalId: string) -> Bas
 type BlueprintComponent = BlueprintSerializer.BlueprintComponent
 
 type PartMap = { [string]: BasePart }
-
-type StagedComponent = {
-	Definition: BlueprintComponent,
-	Part: BasePart,
-}
 
 local function validFiniteNumber(value: any): boolean
 	return typeof(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge
@@ -173,16 +168,6 @@ local function stageTransform(ship: Model, part: BasePart, component: BlueprintC
 		* CFrame.Angles(0, -component.Angle, 0)
 end
 
-local function findSocket(graph: any, socketId: string, socketType: "InConnect" | "OutConnect"): any?
-	for _, node in pairs(graph.Nodes) do
-		local socket = node.Sockets[socketId]
-		if socket and socket.Type == socketType then
-			return node, socket
-		end
-	end
-	return nil
-end
-
 local function validateStagedTopology(
 	staged: PartMap,
 	blueprint: BlueprintSerializer.Blueprint,
@@ -190,9 +175,13 @@ local function validateStagedTopology(
 ): (boolean, string?)
 	local stageModel = Instance.new("Model")
 	stageModel.Name = "BlueprintValidationStage"
-	stageModel.Parent = nil
 
-	local createdParts: { BasePart } = {}
+	local root = staged[blueprint.RootComponentId]
+	if not root then
+		stageModel:Destroy()
+		return false, "staged root missing"
+	end
+
 	for _, component in ipairs(ordered) do
 		local part = staged[component.Id]
 		if not part then
@@ -200,16 +189,9 @@ local function validateStagedTopology(
 			return false, "staged component missing"
 		end
 		part.Parent = stageModel
-		createdParts[#createdParts + 1] = part
 	end
 
-	local stageRoot = staged[blueprint.RootComponentId]
-	if not stageRoot then
-		stageModel:Destroy()
-		return false, "staged root missing"
-	end
-	stageModel.PrimaryPart = stageRoot
-
+	stageModel.PrimaryPart = root
 	local graph = ShipSocketGraph.new(stageModel)
 	if not graph.RootNodeId then
 		stageModel:Destroy()
@@ -222,45 +204,43 @@ local function validateStagedTopology(
 	for _, component in ipairs(ordered) do
 		if component.ParentId then
 			local parent = byId[component.ParentId]
-			if not parent then
+			local parentPart = parent and staged[parent.Id]
+			if not parentPart then
 				stageModel:Destroy()
 				return false, "missing staged parent"
 			end
 
-			local parentPart = staged[parent.Id]
-			if not parentPart then
-				stageModel:Destroy()
-				return false, "missing staged parent part"
-			end
-
-			local parentGraphNode = graph.Nodes[parentPart:GetAttribute("NodeId")]
-			if not parentGraphNode then
+			local parentNode = graph.Nodes[parentPart:GetAttribute("NodeId")]
+			if not parentNode then
 				stageModel:Destroy()
 				return false, "staged parent graph node missing"
 			end
 
-			local parentSocket = parentGraphNode.Sockets[component.ParentHardpointId]
+			local parentSocket = parentNode.Sockets[component.ParentHardpointId]
 			if not parentSocket or parentSocket.Type ~= "InConnect" then
 				stageModel:Destroy()
 				return false, "invalid parent hardpoint: " .. tostring(component.ParentHardpointId)
 			end
-			if occupied[component.ParentId .. ":" .. component.ParentHardpointId] then
-				stageModel:Destroy()
-				return false, "duplicate parent hardpoint assignment"
-			end
-			occupied[component.ParentId .. ":" .. component.ParentHardpointId] = true
 
 			local childPart = staged[component.Id]
-			local childGraphNode = graph.Nodes[childPart:GetAttribute("NodeId")]
-			if not childGraphNode then
+			local childNode = childPart and graph.Nodes[childPart:GetAttribute("NodeId")]
+			if not childNode then
 				stageModel:Destroy()
 				return false, "staged child graph node missing"
 			end
-			local childSocket = childGraphNode.Sockets[component.ChildHardpointId]
+
+			local childSocket = childNode.Sockets[component.ChildHardpointId]
 			if not childSocket or childSocket.Type ~= "OutConnect" then
 				stageModel:Destroy()
 				return false, "invalid child hardpoint: " .. tostring(component.ChildHardpointId)
 			end
+
+			local occupancyKey = component.ParentId .. ":" .. component.ParentHardpointId
+			if occupied[occupancyKey] then
+				stageModel:Destroy()
+				return false, "duplicate parent hardpoint assignment"
+			end
+			occupied[occupancyKey] = true
 		end
 	end
 
@@ -303,20 +283,18 @@ function BlueprintLoader.Load(
 
 	local staged: PartMap = {}
 	local created: { BasePart } = {}
-	local detachedStage = Instance.new("Model")
-	detachedStage.Name = "BlueprintLoadStage"
 
 	for _, component in ipairs(ordered) do
 		local part = factory(component.ComponentType, component.Id)
 		if not part or not part:IsA("BasePart") then
 			destroyCreated(created)
-			detachedStage:Destroy()
 			return false, "component factory failed for " .. component.Id
 		end
 
 		part:SetAttribute("ComponentType", component.ComponentType)
 		part:SetAttribute("BlueprintId", component.Id)
-		part.Parent = detachedStage
+		part:SetAttribute("NodeId", "blueprint_node_" .. component.Id)
+		part.Parent = nil
 		stageTransform(ship, part, component)
 		staged[component.Id] = part
 		created[#created + 1] = part
@@ -325,60 +303,67 @@ function BlueprintLoader.Load(
 	local topologyValid, topologyError = validateStagedTopology(staged, blueprint, ordered)
 	if not topologyValid then
 		destroyCreated(created)
-		detachedStage:Destroy()
 		return false, topologyError
+	end
+
+	for _, part in pairs(staged) do
+		part.Parent = nil
 	end
 
 	local rootPart = staged[blueprint.RootComponentId]
 	if not rootPart then
 		destroyCreated(created)
-		detachedStage:Destroy()
 		return false, "root component was not staged"
 	end
 
-	-- Commit point: only now does the target ship receive the staged parts.
-	for _, component in ipairs(ordered) do
-		local part = staged[component.Id]
-		part.Parent = ship
-	end
-	detachedStage:Destroy()
-	ship.PrimaryPart = rootPart
-
-	-- Attach using the canonical Roblox structural authority. The complete
-	-- blueprint was already validated against its explicit hardpoint IDs, so
-	-- any failure here is a runtime construction/factory mismatch, not a
-	-- blueprint-schema failure.
-	for _, component in ipairs(ordered) do
-		local part = staged[component.Id]
-		if component.ParentId then
-			local childNode, attachError = StructuralAuthority.AttachComponent(
-				ship,
-				part,
-				component.ComponentType,
-				math.huge
-			)
-			if not childNode then
-				for _, createdPart in ipairs(created) do
-					if createdPart.Parent == ship then
-						createdPart:Destroy()
-					end
-				end
-				return false, attachError or ("structural attach failed for " .. component.Id)
+	local committed, commitResult = StructuralAuthority.RunTransaction(ship, function(): (boolean, any?)
+		for _, component in ipairs(ordered) do
+			local part = staged[component.Id]
+			if not part then
+				return false, "missing staged component during commit"
 			end
-
-			part:SetAttribute("ParentNodeId", component.ParentId)
-			part:SetAttribute("ParentSocketId", component.ParentHardpointId)
-			part:SetAttribute("ConnectedSocketId", component.ChildHardpointId)
-			local parentPart = staged[component.ParentId]
-			if parentPart then
-				ComponentAuthority.SetParent(part, parentPart)
-			end
-		else
-			ComponentAuthority.Bind(part, component.ComponentType)
+			part.Parent = ship
 		end
+
+		ship.PrimaryPart = rootPart
+
+		for _, component in ipairs(ordered) do
+			local part = staged[component.Id]
+			if component.ParentId then
+				local childNode, attachError = StructuralAuthority.AttachComponent(
+					ship,
+					part,
+					component.ComponentType,
+					math.huge
+				)
+				if not childNode then
+					return false, attachError or ("structural attach failed for " .. component.Id)
+				end
+
+				part:SetAttribute("ParentNodeId", component.ParentId)
+				part:SetAttribute("ParentSocketId", component.ParentHardpointId)
+				part:SetAttribute("ConnectedSocketId", component.ChildHardpointId)
+
+				local parentPart = staged[component.ParentId]
+				if not parentPart or not ComponentAuthority.SetParent(part, parentPart) then
+					return false, "parent state commit failed for " .. component.Id
+				end
+			else
+				if not ComponentAuthority.Bind(part, component.ComponentType) then
+					return false, "root component binding failed"
+				end
+			end
+		end
+
+		ComponentAuthority.BindShip(ship)
+		return true, nil
+	end)
+
+	if not committed then
+		destroyCreated(created)
+		return false, commitResult
 	end
 
-	ComponentAuthority.BindShip(ship)
 	return true, nil
 end
 

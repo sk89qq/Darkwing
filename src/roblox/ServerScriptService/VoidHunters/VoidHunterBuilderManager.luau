@@ -1,85 +1,115 @@
--- vhBuilderManager.lua
--- Handles modular ship assembly and inventory management
+--[=[
+	VoidHunterBuilderManager
 
-local vhBuilderManager = {}
+	Compatibility facade for inventory and placement callers.
+
+	Blueprint persistence is owned by VoidHunterBuilderServer.
+	Physical placement is owned by StructuralAuthority.
+	Ship ownership is resolved through ShipRegistry.
+]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
+local ServerScriptService = game:GetService("ServerScriptService")
 
--- Dependencies
-local SyncManager = require(game.ServerScriptService.VoidHunters:WaitForChild("VoidHunterSyncManager"))
-local Components = require(game.ReplicatedStorage.VoidHunters:WaitForChild("VoidHunterComponents"))
+local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"))
+local ShipRegistry = require(ReplicatedStorage.Shared.Ship:WaitForChild("ShipRegistry"))
+local StructuralAuthority = require(ReplicatedStorage.Shared.Ship:WaitForChild("StructuralAuthority"))
+local BuilderServer = require(ServerScriptService:WaitForChild("VoidHunterBuilderServer"))
 
--- Configuration
-local GRID_SIZE = 7
+local BuilderManager = {}
+local playerInventories: { [number]: { [string]: number } } = {}
 
--- Communication
-local commsFolder = ReplicatedStorage:WaitForChild("Communication")
-local PlaceComponent = commsFolder:FindFirstChild("PlaceComponent") or Instance.new("RemoteEvent", commsFolder)
-PlaceComponent.Name = "PlaceComponent"
-
--- Inventory Management
-local playerInventories = {}
-
-function vhBuilderManager.AddComponentToInventory(player, componentName)
-	if not playerInventories[player.UserId] then
-		playerInventories[player.UserId] = {}
-	end
-	
-	local inv = playerInventories[player.UserId]
-	inv[componentName] = (inv[componentName] or 0) + 1
-	
-	-- Update client UI (optional)
-	print(string.format("Added %s to %s's inventory", componentName, player.Name))
+local communication = ReplicatedStorage:FindFirstChild("Communication")
+if not communication then
+	communication = Instance.new("Folder")
+	communication.Name = "Communication"
+	communication.Parent = ReplicatedStorage
 end
 
--- Placement Logic
-PlaceComponent.OnServerEvent:Connect(function(player, componentName, gridPos, rotation)
-	local inv = playerInventories[player.UserId]
-	if not inv or not inv[componentName] or inv[componentName] <= 0 then
-		warn(player.Name .. " tried to place a component they don't have: " .. componentName)
-		return
+local placeComponent = communication:FindFirstChild("PlaceComponent")
+if not placeComponent then
+	placeComponent = Instance.new("RemoteEvent")
+	placeComponent.Name = "PlaceComponent"
+	placeComponent.Parent = communication
+end
+placeComponent = placeComponent :: RemoteEvent
+
+function BuilderManager.AddComponentToInventory(player: Player, componentName: string)
+	if typeof(componentName) ~= "string" or not Components.Types[componentName] or not Components.Connections[componentName] then
+		return false
 	end
-	
-	-- Validate placement
-	local blueprint = SyncManager.GetPlayerBlueprint(player)
-	if not blueprint then return end
-	
-	-- Check for overlap
-	for _, comp in ipairs(blueprint.Components) do
-		if comp.Pos == gridPos then
-			warn("Placement overlap at " .. tostring(gridPos))
-			return
+
+	local inventory = playerInventories[player.UserId]
+	if not inventory then
+		inventory = {}
+		playerInventories[player.UserId] = inventory
+	end
+
+	inventory[componentName] = (inventory[componentName] or 0) + 1
+	return true
+end
+
+local function placeComponentForPlayer(player: Player, componentName: string, gridPosition: Vector3, rotation: number?): (boolean, string?)
+	if typeof(componentName) ~= "string" then
+		return false, "Invalid component type"
+	end
+	if not Components.Types[componentName] or not Components.Connections[componentName] then
+		return false, "Unknown component type"
+	end
+	if typeof(gridPosition) ~= "Vector3" then
+		return false, "Invalid position"
+	end
+
+	local inventory = playerInventories[player.UserId]
+	if not inventory or (inventory[componentName] or 0) <= 0 then
+		return false, "Component not in inventory"
+	end
+
+	local ship = ShipRegistry.GetShip(player)
+	if not ship or not ship.Parent then
+		return false, "No active ship"
+	end
+
+	local created = Components.Create(componentName)
+	if not created or not created.part or not created.part:IsA("BasePart") then
+		return false, "Component construction failed"
+	end
+
+	local part = created.part :: BasePart
+	local angle = typeof(rotation) == "number" and rotation or 0
+	local worldPosition = ship:GetPivot():PointToWorldSpace(gridPosition)
+	part.CFrame = CFrame.new(worldPosition) * CFrame.Angles(0, math.rad(angle), 0)
+
+	local childNode, attachError = StructuralAuthority.AttachComponent(ship, part, componentName, 6)
+	if not childNode or attachError then
+		if part.Parent then
+			part:Destroy()
 		end
+		return false, attachError or "Placement rejected"
 	end
-	
-	-- Check connectivity (must be adjacent to an existing part)
-	local isAdjacent = false
-	for _, comp in ipairs(blueprint.Components) do
-		local dist = (comp.Pos - gridPos).Magnitude
-		if dist <= GRID_SIZE + 0.1 then
-			isAdjacent = true
-			break
-		end
+
+	inventory[componentName] -= 1
+	BuilderServer.SaveBlueprint(player, ship)
+	return true, nil
+end
+
+placeComponent.OnServerEvent:Connect(function(player: Player, componentName: string, gridPosition: Vector3, rotation: number?)
+	local success, errorMessage = placeComponentForPlayer(player, componentName, gridPosition, rotation)
+	if not success then
+		warn(string.format("VoidHunterBuilderManager: %s placement rejected: %s", player.Name, errorMessage or "unknown error"))
 	end
-	
-	if not isAdjacent and #blueprint.Components > 0 then
-		warn("Placement not adjacent to ship structure")
-		return
-	end
-	
-	-- Deduct from inventory
-	inv[componentName] = inv[componentName] - 1
-	
-	-- Update blueprint
-	table.insert(blueprint.Components, {
-		Type = componentName,
-		Pos = gridPos,
-		Rot = rotation
-	})
-	
-	-- Respawn ship to reflect changes
-	SyncManager.SpawnPlayerShip(player)
 end)
 
-return vhBuilderManager
+function BuilderManager.GetInventory(player: Player): { [string]: number }
+	return playerInventories[player.UserId] or {}
+end
+
+function BuilderManager.PlaceComponent(player: Player, componentName: string, gridPosition: Vector3, rotation: number?): (boolean, string?)
+	return placeComponentForPlayer(player, componentName, gridPosition, rotation)
+end
+
+function BuilderManager.GetPlayerBlueprint(player: Player)
+	return BuilderServer.GetBlueprint(player)
+end
+
+return BuilderManager

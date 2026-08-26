@@ -7,6 +7,7 @@
 	- ShipRegistry owns player <-> ship ownership.
 	- TeamIdentity owns team validation.
 	- Components owns component definitions and hardpoint metadata.
+	- CapacitorSystem owns ship energy state.
 
 	Roblox Instances remain the physical/presentation projection. Attributes used on
 	transient projectiles and effects are local object state, not component authority.
@@ -35,7 +36,6 @@ local RATE_LIMIT = 20
 local weaponCooldowns: { [BasePart]: number } = setmetatable({}, { __mode = "k" })
 local scramblerCooldowns: { [BasePart]: number } = setmetatable({}, { __mode = "k" })
 local playerRequestCounts: { [number]: { count: number, resetTime: number } } = {}
-local shipEnergy: { [Model]: { current: number, max: number, regen: number, shieldActive: boolean } } = setmetatable({}, { __mode = "k" })
 local shipShields: { [Model]: any } = setmetatable({}, { __mode = "k" })
 local shipCapacitors: { [Model]: any } = setmetatable({}, { __mode = "k" })
 local droneBayStates: { [BasePart]: { activeDrones: { BasePart } } } = setmetatable({}, { __mode = "k" })
@@ -201,7 +201,6 @@ local function destroyShip(ship: Model)
 	local owner = ShipRegistry.GetOwner(ship)
 	ship:SetAttribute("Destroyed", true)
 	ShipRegistry.UnregisterShip(ship)
-	shipEnergy[ship] = nil
 	shipCapacitors[ship] = nil
 	shipShields[ship] = nil
 
@@ -428,10 +427,9 @@ local function spawnDrone(ship: Model, weapon: BasePart, definition: any)
 	end
 	if #state.activeDrones >= (definition.MaxDrones or 3) then return end
 
-	local energy = shipEnergy[ship]
+	local capacitor = shipCapacitors[ship]
 	local cost = definition.EnergyPerDrone or 20
-	if not energy or energy.current < cost then return end
-	energy.current -= cost
+	if not capacitor or not capacitor:Consume(cost) then return end
 
 	local drone = Instance.new("Part")
 	drone.Name = "Drone"
@@ -630,42 +628,31 @@ local function scramblerPulse(ship: Model, weapon: BasePart, definition: any)
 end
 
 local function ensureShipState(ship: Model)
-	if shipEnergy[ship] then return end
+	if shipCapacitors[ship] and shipShields[ship] then return end
 
-	local capacitor = CapacitorSystem.new()
-	capacitor:CalculateFromShip(ship)
-	local shield = ShieldSystem.new()
-	shield:CalculateFromShip(ship)
+	if not shipCapacitors[ship] then
+		local capacitor = CapacitorSystem.new()
+		capacitor:CalculateFromShip(ship)
+		shipCapacitors[ship] = capacitor
+	end
 
-	shipCapacitors[ship] = capacitor
-	shipShields[ship] = shield
-	shipEnergy[ship] = {
-		current = capacitor.CurrentEnergy,
-		max = capacitor.MaxEnergy,
-		regen = capacitor.BaseRegen,
-		shieldActive = shield.IsActive,
-	}
+	if not shipShields[ship] then
+		local shield = ShieldSystem.new()
+		shield:CalculateFromShip(ship)
+		shipShields[ship] = shield
+	end
 end
 
 local function updateShipState(ship: Model, dt: number)
 	ensureShipState(ship)
-	local energy = shipEnergy[ship]
 	local capacitor = shipCapacitors[ship]
 	local shield = shipShields[ship]
-	if not energy then return end
+	if not capacitor then return end
 
-	if capacitor then
-		capacitor:Recharge(dt)
-		energy.current = capacitor.CurrentEnergy
-		energy.max = capacitor.MaxEnergy
-	else
-		energy.current = math.min(energy.max, energy.current + energy.regen * dt)
-	end
-
-	ship:SetAttribute("EnergyPercent", energy.max > 0 and energy.current / energy.max or 1)
+	capacitor:Recharge(dt)
+	ship:SetAttribute("EnergyPercent", capacitor:GetEnergyPercent())
 	if shield then
 		shield:Step(dt)
-		energy.shieldActive = shield.IsActive
 		ship:SetAttribute("ShieldHP", shield.CurrentHP)
 	end
 end
@@ -718,10 +705,9 @@ FireWeaponEvent.OnServerEvent:Connect(function(player: Player, ship: any, weapon
 	if now < (weaponCooldowns[weapon] or 0) + cooldown then return end
 
 	ensureShipState(ship)
-	local energy = shipEnergy[ship]
+	local capacitor = shipCapacitors[ship]
 	local powerCost = definition.PowerPerShot or 0
-	if energy and powerCost > 0 and energy.current < powerCost then return end
-	if energy then energy.current -= powerCost end
+	if powerCost > 0 and (not capacitor or not capacitor:Consume(powerCost)) then return end
 	weaponCooldowns[weapon] = now
 
 	local aimCFrame = aimDir and CFrame.lookAt(weapon.Position, weapon.Position + aimDir) or weapon.CFrame
@@ -776,10 +762,9 @@ FireScramblerEvent.OnServerEvent:Connect(function(player: Player, ship: any, scr
 	if now < (scramblerCooldowns[scrambler] or 0) + cooldown then return end
 
 	ensureShipState(ship)
-	local energy = shipEnergy[ship]
+	local capacitor = shipCapacitors[ship]
 	local powerCost = definition.PowerCost or 0
-	if energy and powerCost > 0 and energy.current < powerCost then return end
-	if energy then energy.current -= powerCost end
+	if powerCost > 0 and (not capacitor or not capacitor:Consume(powerCost)) then return end
 
 	scramblerCooldowns[scrambler] = now
 	scramblerPulse(ship, scrambler, definition)

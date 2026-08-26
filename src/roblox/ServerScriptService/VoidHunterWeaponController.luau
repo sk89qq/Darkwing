@@ -1,32 +1,47 @@
 --[=[
 	VoidHunter Weapon Controller (Server)
-	
-	Existing weapon/combat implementation retained, but component lifecycle is now
-	centralized through ComponentAuthority + StructuralAuthority.
 
-	Compatibility tables `partHealth` / `partMaxHealth` intentionally remain as
-	views so existing weapon code does not need to be duplicated or rewritten;
-	they no longer own state.
+	Canonical combat orchestration:
+	- ComponentAuthority owns component state and HP.
+	- StructuralAuthority owns structural mutation.
+	- ShipRegistry owns player <-> ship ownership.
+	- TeamIdentity owns team validation.
+	- Components owns component definitions and hardpoint metadata.
+
+	Roblox Instances remain the physical/presentation projection. Attributes used on
+	transient projectiles and effects are local object state, not component authority.
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Debris = game:GetService("Debris")
 local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
-local Components = require(ReplicatedStorage.VoidHunterComponents)
+local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"))
 local SoundManager = require(ReplicatedStorage.VoidHunters:WaitForChild("VoidHunterSoundManager"))
 local ComponentAuthority = require(ReplicatedStorage.Shared.Combat:WaitForChild("ComponentAuthority"))
 local StructuralAuthority = require(ReplicatedStorage.Shared.Ship:WaitForChild("StructuralAuthority"))
+local ShipRegistry = require(ReplicatedStorage.Shared.Ship:WaitForChild("ShipRegistry"))
 local CombatTypes = require(ReplicatedStorage.Shared.Combat.CombatTypes)
 local CapacitorSystem = require(ReplicatedStorage.Shared.Combat.CapacitorSystem)
 local ShieldSystem = require(ReplicatedStorage.Shared.Combat.ShieldSystem)
 local BallisticsEngine = require(ReplicatedStorage.Shared.Combat.BallisticsEngine)
 local TeamIdentity = require(ReplicatedStorage.Shared.Combat:WaitForChild("TeamIdentity"))
-local ShipRegistry = require(ReplicatedStorage.Shared.Ship:WaitForChild("ShipRegistry"))
-local UNIT = 7
 
--- Create RemoteEvents if they don't exist
+local UNIT = Components.UNIT or 7
+local HEIGHT = Components.HEIGHT or 3.5
+local RATE_LIMIT = 20
+
+local weaponCooldowns: { [BasePart]: number } = setmetatable({}, { __mode = "k" })
+local scramblerCooldowns: { [BasePart]: number } = setmetatable({}, { __mode = "k" })
+local playerRequestCounts: { [number]: { count: number, resetTime: number } } = {}
+local shipEnergy: { [Model]: { current: number, max: number, regen: number, shieldActive: boolean } } = setmetatable({}, { __mode = "k" })
+local shipShields: { [Model]: any } = setmetatable({}, { __mode = "k" })
+local shipCapacitors: { [Model]: any } = setmetatable({}, { __mode = "k" })
+local droneBayStates: { [BasePart]: { activeDrones: { BasePart } } } = setmetatable({}, { __mode = "k" })
+local pointDefenceStates: { [BasePart]: { lastTargetTime: { [BasePart]: number } } } = setmetatable({}, { __mode = "k" })
+local ballistics = BallisticsEngine.new(nil)
+
 local FireWeaponEvent = ReplicatedStorage:FindFirstChild("VoidHunterFireWeapon")
 if not FireWeaponEvent then
 	FireWeaponEvent = Instance.new("RemoteEvent")
@@ -41,55 +56,48 @@ if not FireScramblerEvent then
 	FireScramblerEvent.Parent = ReplicatedStorage
 end
 
--- State tracking
-local weaponCooldowns = {}
-local shipEnergy = {}
-local shipShields = {} :: { [Model]: any }
-local shipCapacitors = {} :: { [Model]: any }
-local scramblerCooldowns = {}
-local ballistics = BallisticsEngine.new(nil)
+local function getComponentState(part: BasePart)
+	return ComponentAuthority.Get(part) or ComponentAuthority.Bind(part)
+end
 
--- Rate limiting (max requests per second per player)
-local RATE_LIMIT = 20
-local playerRequestCounts = {}
-
--- Helper Functions
 local function getComponentType(part: BasePart): string?
-	local state = ComponentAuthority.Get(part) or ComponentAuthority.Bind(part)
+	local state = getComponentState(part)
 	return state and state.TypeName or nil
 end
 
-local function isHull(part)
-	local name = part.Name
-	return name == "Light Hull" or name == "Medium Hull" or name == "Heavy Hull"
+local function getComponentDefinition(part: BasePart): any?
+	local typeName = getComponentType(part)
+	return typeName and Components.Types[typeName] or nil
 end
 
-local function getOwnerShip(part)
-	local model = part and part:FindFirstAncestorOfClass("Model")
-	return model and model:GetAttribute("IsShip") and model or nil
+local function isHull(part: BasePart): boolean
+	local definition = getComponentDefinition(part)
+	return definition ~= nil and definition.IsHull == true
 end
 
-local function getShipParts(ship)
-	local parts = {}
-	for _, child in ipairs(ship:GetDescendants()) do
-		if child:IsA("BasePart") and not child:IsA("VehicleSeat") then
-			table.insert(parts, child)
-		end
+local function getOwnerShip(part: BasePart): Model?
+	local model = part:FindFirstAncestorOfClass("Model")
+	if model and model:GetAttribute("IsShip") == true then
+		return model
 	end
-	return parts
+	return nil
 end
 
-local function findNearestEnemy(ship, range)
-	local shipPos = ship.PrimaryPart and ship.PrimaryPart.Position or ship:GetPivot().Position
-	local nearest, nearestDist = nil, range
+local function getShipPosition(ship: Model): Vector3
+	return ship.PrimaryPart and ship.PrimaryPart.Position or ship:GetPivot().Position
+end
 
-	for _, obj in pairs(ShipRegistry.GetAll()) do
-		if obj ~= ship then
-			local objPos = obj.PrimaryPart and obj.PrimaryPart.Position or obj:GetPivot().Position
-			local dist = (objPos - shipPos).Magnitude
-			if dist < nearestDist then
-				nearestDist = dist
-				nearest = obj
+local function findNearestEnemy(ship: Model, range: number): Model?
+	local shipPosition = getShipPosition(ship)
+	local nearest: Model? = nil
+	local nearestDistance = range
+
+	for _, candidate in pairs(ShipRegistry.GetAll()) do
+		if candidate ~= ship and candidate.Parent then
+			local distance = (getShipPosition(candidate) - shipPosition).Magnitude
+			if distance < nearestDistance then
+				nearestDistance = distance
+				nearest = candidate
 			end
 		end
 	end
@@ -97,486 +105,386 @@ local function findNearestEnemy(ship, range)
 	return nearest
 end
 
--- Input Validation Functions
-local function validatePlayer(player)
-	if not player or not player.Parent then
-		return false, "Invalid player"
+local function getComponentParts(ship: Model): { BasePart }
+	local parts: { BasePart } = {}
+	for _, instance in ipairs(ship:GetDescendants()) do
+		if instance:IsA("BasePart") and not instance:IsA("VehicleSeat") and ComponentAuthority.IsComponent(instance) then
+			parts[#parts + 1] = instance
+		end
 	end
-	return true
+	return parts
 end
 
-local function validateShip(player: Player, ship: Model): (boolean, string?)
-	if not ship or not ship.Parent then
+local function isFiniteNumber(value: any): boolean
+	return typeof(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge
+end
+
+local function validatePlayer(player: Player): (boolean, string?)
+	if not player.Parent then
+		return false, "Invalid player"
+	end
+	return true, nil
+end
+
+local function validateShip(player: Player, ship: Instance): (boolean, string?)
+	if not ship or not ship:IsA("Model") or not ship.Parent then
 		return false, "Invalid ship"
 	end
-	if not ship:GetAttribute("IsShip") then
+	if ship:GetAttribute("IsShip") ~= true then
 		return false, "Not a valid ship"
 	end
 	if not ShipRegistry.IsOwner(player, ship) then
 		return false, "Ship ownership mismatch"
 	end
-	return true
+	return true, nil
 end
 
-local function validateWeaponPart(ship, weaponName)
-	if type(weaponName) ~= "string" or weaponName == "" then
+local function validateWeaponPart(ship: Model, weaponName: any): (boolean, string?, BasePart?, string?, any?)
+	if typeof(weaponName) ~= "string" or weaponName == "" then
 		return false, "Invalid weapon name"
 	end
+
 	local weapon = ship:FindFirstChild(weaponName, true)
-	if not weapon or not weapon:IsA("BasePart") then
+	if not weapon or not weapon:IsA("BasePart") or not weapon:IsDescendantOf(ship) then
 		return false, "Weapon not found"
 	end
+
 	local typeName = getComponentType(weapon)
-	if not typeName then
-		return false, "Unknown weapon type"
+	local definition = typeName and Components.Types[typeName]
+	if not typeName or not definition then
+		return false, "Unknown component type"
 	end
-	local def = Components.Types[typeName]
-	if not def or not def.Damage then
+	if not definition.Damage then
 		return false, "Not a weapon component"
 	end
-	return true, weapon, typeName, def
+
+	return true, nil, weapon, typeName, definition
 end
 
-local function validateAimDirection(aimDir)
-	if not aimDir then
-		return true, nil
+local function validateAimDirection(aimDirection: any): (boolean, string?, Vector3?)
+	if aimDirection == nil then
+		return true, nil, nil
 	end
-	if typeof(aimDir) ~= "Vector3" then
-		return false, "Invalid aim direction type"
+	if typeof(aimDirection) ~= "Vector3" or aimDirection.Magnitude < 0.001 then
+		return false, "Invalid aim direction", nil
 	end
-	if aimDir ~= aimDir or aimDir.Magnitude < 0.001 then
-		return false, "Invalid aim direction"
-	end
-	return true, aimDir.Unit
+	return true, nil, aimDirection.Unit
 end
 
-local function checkRateLimit(player)
+local function checkRateLimit(player: Player): boolean
 	local now = os.clock()
-	local userId = player.UserId
-	if not playerRequestCounts[userId] then
-		playerRequestCounts[userId] = { count = 0, resetTime = now + 1 }
+	local state = playerRequestCounts[player.UserId]
+	if not state then
+		state = { count = 0, resetTime = now + 1 }
+		playerRequestCounts[player.UserId] = state
+	elseif now > state.resetTime then
+		state.count = 0
+		state.resetTime = now + 1
 	end
-	local data = playerRequestCounts[userId]
-	if now > data.resetTime then
-		data.count = 0
-		data.resetTime = now + 1
-	end
-	data.count += 1
-	return data.count <= RATE_LIMIT
+	state.count += 1
+	return state.count <= RATE_LIMIT
 end
 
--- Damage System.
-local function applyDamage(part, damage, damageTypeOrIsPlasma, attackerShip, hitPosition)
-	if not part or not part:IsA("BasePart") or typeof(damage) ~= "number" or damage <= 0 then
-		return
+local function getMuzzlePosition(weapon: BasePart, aimCFrame: CFrame): Vector3
+	local attachment = weapon:FindFirstChild("Muzzle")
+	if attachment and attachment:IsA("Attachment") then
+		return attachment.WorldPosition
 	end
-
-	if attackerShip then
-		local attackerTeam = TeamIdentity.Get(attackerShip)
-		local victimModel = part:FindFirstAncestorOfClass("Model")
-		local victimTeam = victimModel and TeamIdentity.Get(victimModel)
-		if attackerTeam and victimTeam and attackerTeam == victimTeam then
-			return
-		end
-	end
-
-	local victimShip = getOwnerShip(part)
-	local damageType: CombatTypes.DamageType = "Kinetic"
-	if typeof(damageTypeOrIsPlasma) == "boolean" then
-		damageType = damageTypeOrIsPlasma and "Thermal" or "Kinetic"
-	elseif typeof(damageTypeOrIsPlasma) == "string" then
-		damageType = damageTypeOrIsPlasma :: CombatTypes.DamageType
-	end
-
-	local effectiveHullDamage = damage
-	if victimShip and shipShields[victimShip] then
-		local shield = shipShields[victimShip]
-		effectiveHullDamage = shield:AbsorbDamage(damage, damageType)
-		if shield.IsActive and effectiveHullDamage < damage then
-			local shieldRing = Instance.new("Part")
-			shieldRing.Name = "ShieldHitEffect"
-			shieldRing.Shape = Enum.PartShape.Ball
-			shieldRing.Size = Vector3.new(shield.Radius * 1.8, 1, shield.Radius * 1.8)
-			shieldRing.Color = Color3.fromRGB(80, 180, 255)
-			shieldRing.Material = Enum.Material.Neon
-			shieldRing.Transparency = 0.6
-			shieldRing.Anchored = true
-			shieldRing.CanCollide = false
-			local sPos = victimShip.PrimaryPart and victimShip.PrimaryPart.Position or victimShip:GetPivot().Position
-			shieldRing.Position = Vector3.new(sPos.X, 3.5, sPos.Z)
-			shieldRing.Parent = workspace
-			Debris:AddItem(shieldRing, 0.12)
-		end
-	end
-
-	if damageType == "EMP" and victimShip and shipCapacitors[victimShip] then
-		shipCapacitors[victimShip]:Drain(damage * 1.5)
-	end
-
-	if (damageType == "Kinetic" or damageType == "Explosive") and victimShip and victimShip.PrimaryPart and attackerShip then
-		local aPos = attackerShip.PrimaryPart and attackerShip.PrimaryPart.Position or attackerShip:GetPivot().Position
-		local vPos = victimShip.PrimaryPart.Position
-		local pushDir = vPos - aPos
-		if pushDir.Magnitude > 0.1 then
-			local impulse = pushDir.Unit * math.min(damage * 12, 400)
-			victimShip.PrimaryPart.AssemblyLinearVelocity += Vector3.new(impulse.X, 0, impulse.Z) / 10
-		end
-	end
-
-	if effectiveHullDamage <= 0 then
-		return
-	end
-
-	local state = ComponentAuthority.Get(part) or ComponentAuthority.Bind(part)
-	if not state or state.MaxHealth <= 0 then
-		return
-	end
-
-	-- Retain the existing prototype's thermal/hull reduction as an implementation
-	-- behavior; this is not marked forensic-verified until source tracing is complete.
-	if damageType == "Thermal" and isHull(part) then
-		effectiveHullDamage *= 0.5
-	end
-
-	local updated, destroyed = ComponentAuthority.ApplyDamage(part, effectiveHullDamage)
-	if updated and destroyed then
-		destroyComponent(part)
-	end
+	return weapon.Position + aimCFrame.LookVector * (UNIT / 2 + 1)
 end
 
-function destroyComponent(part)
-	if not part or not part.Parent then
+local function destroyShip(ship: Model)
+	if not ship.Parent then
 		return
 	end
 
-	local ship = getOwnerShip(part)
-	if not ship then
-		-- Projectiles/temporary combat objects are not Components and use normal
-		-- transient-object cleanup instead of ship graph mutation.
-		part:Destroy()
-		return
-	end
-
-	local isCommandCore = part:GetAttribute("IsCore") == true or part.Name == "Command Core"
-
-	local emitter = Instance.new("ParticleEmitter")
-	emitter.Texture = "rbxasset://textures/particles/sparkle_main.dds"
-	emitter.Rate = 40
-	emitter.Lifetime = NumberRange.new(0.1, 0.2)
-	emitter.Speed = NumberRange.new(2, 6)
-	emitter.Size = NumberSequence.new(0.2)
-	emitter.Transparency = NumberSequence.new(0, 1)
-	emitter.Color = ColorSequence.new(Color3.new(1, 0.3, 0.3))
-	emitter.Parent = part
-	task.delay(0.05, function()
-		if emitter.Parent then emitter.Enabled = false end
-	end)
-	Debris:AddItem(emitter, 0.5)
-
-	ComponentAuthority.MarkDestroyed(part)
-
-	if isCommandCore then
-		-- Root/core removal is intentionally delegated to the ship-level death path.
-		destroyShip(ship)
-		return
-	end
-
-	-- Structural destruction is graph mutation + physical debris conversion.
-	-- Do not delete the component or clone/scatter a replacement.
-	StructuralAuthority.DetachComponent(ship, part, "Destroyed")
-	ComponentAuthority.Clear(part)
-end
-
-function destroyShip(ship)
-	if not ship or not ship.Parent then
-		return
-	end
-
+	local owner = ShipRegistry.GetOwner(ship)
 	ship:SetAttribute("Destroyed", true)
-	local owner
-	for player, playerShip in pairs(ShipRegistry.GetAll()) do
-		if playerShip == ship then
-			owner = player
-			break
-		end
-	end
-
+	ShipRegistry.UnregisterShip(ship)
 	shipEnergy[ship] = nil
 	shipCapacitors[ship] = nil
 	shipShields[ship] = nil
 
 	if owner then
-		local character = owner.Character
-		local hrp = character and character:FindFirstChild("HumanoidRootPart")
-		if hrp then
-			hrp.CFrame = CFrame.new(Vector3.new(5000, 2, 4970))
-		end
 		owner:SetAttribute("InShip", false)
 		owner:SetAttribute("ShipType", nil)
 	end
 
-	-- Root death is a ship lifecycle event. We do not invent a clone/scatter salvage
-	-- rule here; detached component behavior is handled by StructuralAuthority.
 	ship:Destroy()
 end
 
-local function getMuzzlePosition(weapon, aimCFrame)
-	local muzzleAttach = nil
-	for _, child in ipairs(weapon:GetChildren()) do
-		if child:IsA("Attachment") and child.Name == "Muzzle" then
-			muzzleAttach = child
-			break
+local function applyDamage(part: BasePart, damage: number, damageType: CombatTypes.DamageType, attackerShip: Model?, hitPosition: Vector3?)
+	if not part.Parent or not isFiniteNumber(damage) or damage <= 0 then
+		return
+	end
+
+	local victimShip = getOwnerShip(part)
+	if attackerShip and victimShip then
+		local attackerTeam = TeamIdentity.Get(attackerShip)
+		local victimTeam = TeamIdentity.Get(victimShip)
+		if attackerTeam and victimTeam and attackerTeam == victimTeam then
+			return
 		end
 	end
-	if muzzleAttach then
-		return weapon.CFrame:PointToWorldSpace(muzzleAttach.Position)
+
+	local effectiveDamage = damage
+	local shield = victimShip and shipShields[victimShip]
+	if shield then
+		effectiveDamage = shield:AbsorbDamage(effectiveDamage, damageType)
 	end
-	return weapon.Position + aimCFrame.LookVector * (UNIT / 2 + 1)
+
+	if damageType == "EMP" and victimShip then
+		local capacitor = shipCapacitors[victimShip]
+		if capacitor then
+			capacitor:Drain(damage * 1.5)
+		end
+	end
+
+	if (damageType == "Kinetic" or damageType == "Explosive") and attackerShip and victimShip and victimShip.PrimaryPart then
+		local push = getShipPosition(victimShip) - getShipPosition(attackerShip)
+		if push.Magnitude > 0.1 then
+			victimShip.PrimaryPart:ApplyImpulse(push.Unit * math.min(damage * 12, 400) * victimShip.PrimaryPart.AssemblyMass)
+		end
+	end
+
+	if effectiveDamage <= 0 then
+		return
+	end
+
+	local state = getComponentState(part)
+	if not state or state.MaxHealth <= 0 or state.Destroyed then
+		return
+	end
+
+	if damageType == "Thermal" and isHull(part) then
+		effectiveDamage *= 0.5
+	end
+
+	local updated, destroyed = ComponentAuthority.ApplyDamage(part, effectiveDamage)
+	if not destroyed or not updated then
+		return
+	end
+
+	local ship = getOwnerShip(part)
+	if not ship then
+		part:Destroy()
+		return
+	end
+
+	local definition = Components.Types[updated.TypeName]
+	if definition and definition.IsCore == true then
+		destroyShip(ship)
+	else
+		StructuralAuthority.DetachComponent(ship, part, "Destroyed")
+	end
 end
 
-local function spawnMassDriverProjectile(ship, weapon, def, aimCFrame)
-	aimCFrame = aimCFrame or weapon.CFrame
-	local spawnPos = getMuzzlePosition(weapon, aimCFrame)
-	SoundManager.PlayWeapon("MassDriver", spawnPos)
-
+local function spawnMassDriverProjectile(ship: Model, weapon: BasePart, definition: any, aimCFrame: CFrame)
 	local projectile = Instance.new("Part")
 	projectile.Name = "MD_Projectile"
-	projectile.Size = Vector3.new(0.5, 0.3, 1) * (UNIT / 7)
-	projectile.BrickColor = BrickColor.new(def.ProjectileColor)
+	projectile.Size = definition.ProjectileSize or Vector3.new(0.5, 0.3, 1)
+	projectile.BrickColor = BrickColor.new(definition.ProjectileColor)
 	projectile.Material = Enum.Material.Neon
-	projectile.Shape = Enum.PartShape.Cylinder
+	projectile.Shape = Enum.PartType.Cylinder
+	projectile.CFrame = aimCFrame
 	projectile.Anchored = false
 	projectile.CanCollide = true
-	projectile.Position = spawnPos
-	projectile.CFrame = aimCFrame
-	projectile.Parent = workspace
-
-	local velocity = Instance.new("BodyVelocity")
-	velocity.Velocity = aimCFrame.LookVector * def.ProjectileSpeed
-	velocity.MaxForce = Vector3.new(1e5, 0, 1e5)
-	velocity.Parent = projectile
-	Debris:AddItem(projectile, def.Range / def.ProjectileSpeed)
+	projectile.Parent = Workspace
+	projectile.AssemblyLinearVelocity = aimCFrame.LookVector * definition.ProjectileSpeed
+	Debris:AddItem(projectile, definition.Range / math.max(definition.ProjectileSpeed, 1))
+	SoundManager.PlayWeapon("MassDriver", projectile.Position)
 
 	projectile.Touched:Connect(function(hit)
-		if not projectile.Parent or hit:IsDescendantOf(ship) then return end
-		local owner = getOwnerShip(hit)
-		if owner and owner ~= ship then
-			applyDamage(hit, def.Damage, false, ship, projectile.Position)
-			projectile:Destroy()
+		if not projectile.Parent or hit:IsDescendantOf(ship) then
+			return
+		end
+		local victimShip = getOwnerShip(hit)
+		if victimShip and victimShip ~= ship then
+			applyDamage(hit, definition.Damage, "Kinetic", ship, projectile.Position)
+			if projectile.Parent then projectile:Destroy() end
 		end
 	end)
 end
 
-local function spawnPlasmaProjectile(ship, weapon, def, aimCFrame, muzzleOffset)
-	aimCFrame = aimCFrame or weapon.CFrame
-	local spawnPos = getMuzzlePosition(weapon, aimCFrame)
-	if muzzleOffset then
-		spawnPos = weapon.CFrame:PointToWorldSpace(muzzleOffset)
-	end
-
-	SoundManager.PlayWeapon("PlasmaBall", spawnPos)
+local function spawnPlasmaProjectile(ship: Model, weapon: BasePart, definition: any, aimCFrame: CFrame, muzzleOffset: Vector3?)
+	local position = muzzleOffset and weapon.CFrame:PointToWorldSpace(muzzleOffset) or getMuzzlePosition(weapon, aimCFrame)
 	local projectile = Instance.new("Part")
 	projectile.Name = "Plasma_Projectile"
-	projectile.Size = Vector3.new(1, 1, 1) * (UNIT / 7) * 2
-	projectile.BrickColor = BrickColor.new(def.ProjectileColor)
+	projectile.Size = Vector3.one * 2
+	projectile.BrickColor = BrickColor.new(definition.ProjectileColor)
 	projectile.Material = Enum.Material.Neon
-	projectile.Shape = Enum.PartShape.Ball
+	projectile.Shape = Enum.PartType.Ball
+	projectile.CFrame = CFrame.new(position)
 	projectile.Anchored = false
 	projectile.CanCollide = true
-	projectile.Position = spawnPos
-	projectile.CFrame = aimCFrame
-	projectile.Parent = workspace
+	projectile.Parent = Workspace
 	projectile:SetAttribute("IsPlasma", true)
+	projectile.AssemblyLinearVelocity = aimCFrame.LookVector * definition.ProjectileSpeed
 
 	local light = Instance.new("PointLight")
 	light.Brightness = 3
 	light.Range = 8
-	light.Color = def.ProjectileColor
+	light.Color = definition.ProjectileColor
 	light.Parent = projectile
+	SoundManager.PlayWeapon("PlasmaBall", position)
 
-	local velocity = Instance.new("BodyVelocity")
-	velocity.Velocity = aimCFrame.LookVector * def.ProjectileSpeed
-	velocity.MaxForce = Vector3.new(1e5, 0, 1e5)
-	velocity.Parent = projectile
-
-	local touchedParts = {}
+	local touchedParts: { [BasePart]: boolean } = {}
 	projectile.Touched:Connect(function(hit)
-		if not projectile.Parent or hit:IsDescendantOf(ship) or touchedParts[hit] then return end
+		if not projectile.Parent or hit:IsDescendantOf(ship) or touchedParts[hit] then
+			return
+		end
 		touchedParts[hit] = true
-		local owner = getOwnerShip(hit)
-		if owner and owner ~= ship then
-			task.spawn(function()
-				while projectile.Parent and hit.Parent do
-					applyDamage(hit, def.TickDamage * 0.5, true, ship, projectile.Position)
-					task.wait(0.5)
-				end
-			end)
+		local victimShip = getOwnerShip(hit)
+		if victimShip and victimShip ~= ship then
+			applyDamage(hit, (definition.TickDamage or definition.Damage) * 0.5, "Thermal", ship, projectile.Position)
 		end
 	end)
 
-	Debris:AddItem(projectile, def.Range / def.ProjectileSpeed)
-	task.delay(def.Range / def.ProjectileSpeed, function()
-		if projectile.Parent then
-			for _, part in ipairs(workspace:GetPartBoundsInRadius(projectile.Position, 4)) do
-				local owner = getOwnerShip(part)
-				if owner and owner ~= ship then
-					applyDamage(part, def.Damage, true, ship, projectile.Position)
-				end
+	local lifetime = definition.Range / math.max(definition.ProjectileSpeed, 1)
+	Debris:AddItem(projectile, lifetime)
+	task.delay(lifetime, function()
+		if not projectile.Parent then return end
+		for _, part in ipairs(Workspace:GetPartBoundsInRadius(projectile.Position, 4)) do
+			local victimShip = getOwnerShip(part)
+			if victimShip and victimShip ~= ship then
+				applyDamage(part, definition.Damage, "Thermal", ship, projectile.Position)
 			end
-			projectile:Destroy()
 		end
+		if projectile.Parent then projectile:Destroy() end
 	end)
 end
 
-local function spawnMissiles(ship, weapon, def, aimCFrame)
-	aimCFrame = aimCFrame or weapon.CFrame
-	local spawnPos = getMuzzlePosition(weapon, aimCFrame)
-	local spreadAngle = math.rad(def.SpreadAngle or 15)
-	SoundManager.PlayWeapon("MissileLauncher", spawnPos)
+local function spawnMissiles(ship: Model, weapon: BasePart, definition: any, aimCFrame: CFrame)
+	local spawnPosition = getMuzzlePosition(weapon, aimCFrame)
+	SoundManager.PlayWeapon("MissileLauncher", spawnPosition)
+	local spread = math.rad(definition.SpreadAngle or 15)
 
-	for i = 1, 2 do
-		local offset = i == 1 and CFrame.Angles(0, spreadAngle, 0) or CFrame.Angles(0, -spreadAngle, 0)
-		local projectile = Instance.new("Part")
-		projectile.Name = "Missile_" .. i
-		projectile.Size = Vector3.new(0.5, 0.5, 0.5)
-		projectile.BrickColor = BrickColor.new(def.ProjectileColor)
-		projectile.Material = Enum.Material.Neon
-		projectile.Shape = Enum.PartShape.Ball
-		projectile.Anchored = false
-		projectile.CanCollide = true
-		projectile.Position = spawnPos
-		projectile.CFrame = aimCFrame * offset
-		projectile.Parent = workspace
-		projectile:SetAttribute("IsMissile", true)
-		projectile:SetAttribute("MissileHP", def.MissileHP or 25)
+	for index = 1, 2 do
+		local offset = index == 1 and CFrame.Angles(0, spread, 0) or CFrame.Angles(0, -spread, 0)
+		local missileCFrame = aimCFrame * offset
+		local missile = Instance.new("Part")
+		missile.Name = "Missile_" .. index
+		missile.Size = Vector3.new(0.5, 0.5, 0.5)
+		missile.BrickColor = BrickColor.new(definition.ProjectileColor)
+		missile.Material = Enum.Material.Neon
+		missile.Shape = Enum.PartType.Ball
+		missile.CFrame = CFrame.new(spawnPosition)
+		missile.Anchored = false
+		missile.CanCollide = true
+		missile.Parent = Workspace
+		missile:SetAttribute("IsMissile", true)
+		missile:SetAttribute("MissileHP", definition.MissileHP or 25)
+		missile.AssemblyLinearVelocity = missileCFrame.LookVector * definition.ProjectileSpeed
 
-		local velocity = Instance.new("BodyVelocity")
-		velocity.Velocity = (aimCFrame * offset).LookVector * def.ProjectileSpeed
-		velocity.MaxForce = Vector3.new(1e4, 0, 1e4)
-		velocity.Parent = projectile
-
-		local target = findNearestEnemy(ship, def.Range)
+		local target = findNearestEnemy(ship, definition.Range)
 		if target then
-			projectile:SetAttribute("HomingActive", true)
+			missile:SetAttribute("HomingActive", true)
 			task.spawn(function()
-				while projectile.Parent and projectile:GetAttribute("HomingActive") do
-					local targetPos = target.PrimaryPart and target.PrimaryPart.Position or target:GetPivot().Position
-					if (targetPos - projectile.Position).Magnitude > 0.1 then
-						velocity.Velocity = (targetPos - projectile.Position).Unit * def.ProjectileSpeed
+				while missile.Parent and missile:GetAttribute("HomingActive") and target.Parent do
+					local direction = getShipPosition(target) - missile.Position
+					if direction.Magnitude > 0.1 then
+						missile.AssemblyLinearVelocity = direction.Unit * definition.ProjectileSpeed
 					end
 					task.wait(0.1)
 				end
 			end)
 		end
 
-		projectile.Touched:Connect(function(hit)
-			if not projectile.Parent or hit:IsDescendantOf(ship) then return end
+		missile.Touched:Connect(function(hit)
+			if not missile.Parent or hit:IsDescendantOf(ship) then return end
 			if hit:GetAttribute("IsMissile") or hit:GetAttribute("IsPlasma") or hit.Name == "MD_Projectile" then
-				local missileHP = projectile:GetAttribute("MissileHP") or 25
-				projectile:SetAttribute("MissileHP", missileHP - 25)
-				if missileHP - 25 <= 0 then projectile:Destroy() end
+				local hp = missile:GetAttribute("MissileHP") or 25
+				hp -= 25
+				missile:SetAttribute("MissileHP", hp)
+				if hp <= 0 then missile:Destroy() end
 				return
 			end
-			local owner = getOwnerShip(hit)
-			if owner and owner ~= ship then
-				applyDamage(hit, def.Damage, false, ship, projectile.Position)
-				projectile:Destroy()
+			local victimShip = getOwnerShip(hit)
+			if victimShip and victimShip ~= ship then
+				applyDamage(hit, definition.Damage, "Kinetic", ship, missile.Position)
+				if missile.Parent then missile:Destroy() end
 			end
 		end)
-		Debris:AddItem(projectile, def.Range / def.ProjectileSpeed)
+
+		Debris:AddItem(missile, definition.Range / math.max(definition.ProjectileSpeed, 1))
 	end
 end
 
-local function getDroneSpawnPosition(weapon)
-	for _, child in ipairs(weapon:GetChildren()) do
-		if child:IsA("Attachment") and child.Name == "DroneSpawn" then
-			return weapon.CFrame:PointToWorldSpace(child.Position)
-		end
-	end
+local function getDroneSpawnPosition(weapon: BasePart): Vector3
+	local attachment = weapon:FindFirstChild("DroneSpawn")
+	if attachment and attachment:IsA("Attachment") then return attachment.WorldPosition end
 	return weapon.Position + Vector3.new(0, 2, 0)
 end
 
-local droneBayStates = {}
-
-local function spawnDrone(ship, weapon, def)
-	if not droneBayStates[weapon] then
-		droneBayStates[weapon] = { activeDrones = {}, lastSpawnTime = 0 }
-	end
+local function spawnDrone(ship: Model, weapon: BasePart, definition: any)
 	local state = droneBayStates[weapon]
-	local maxDrones = def.MaxDrones or 3
-	if #state.activeDrones >= maxDrones then return end
+	if not state then
+		state = { activeDrones = {} }
+		droneBayStates[weapon] = state
+	end
 
-	local energyCost = def.EnergyPerDrone or 20
-	local energyData = shipEnergy[ship]
-	if not energyData or energyData.current < energyCost then return end
-	energyData.current -= energyCost
+	for index = #state.activeDrones, 1, -1 do
+		if not state.activeDrones[index].Parent then table.remove(state.activeDrones, index) end
+	end
+	if #state.activeDrones >= (definition.MaxDrones or 3) then return end
 
-	SoundManager.PlayWeapon("DroneBay", weapon.Position)
-	local spawnPos = getDroneSpawnPosition(weapon)
+	local energy = shipEnergy[ship]
+	local cost = definition.EnergyPerDrone or 20
+	if not energy or energy.current < cost then return end
+	energy.current -= cost
+
 	local drone = Instance.new("Part")
-	drone.Name = "Drone_" .. tostring(ship)
+	drone.Name = "Drone"
 	drone.Size = Vector3.new(0.5, 0.5, 0.5)
 	drone.Color = Color3.fromRGB(255, 50, 50)
 	drone.Material = Enum.Material.Neon
-	drone.Shape = Enum.PartShape.Ball
+	drone.Shape = Enum.PartType.Ball
+	drone.Position = getDroneSpawnPosition(weapon)
 	drone.Anchored = false
 	drone.CanCollide = true
-	drone.Position = spawnPos
-	drone.Parent = workspace
-	drone:SetAttribute("DroneHP", def.DroneHP or 50)
-	drone:SetAttribute("DroneMaxHP", def.DroneHP or 50)
-	drone:SetAttribute("DroneEnergy", 50)
-	drone:SetAttribute("DroneOwnerShip", ship:GetAttribute("OwnerId") or 0)
+	drone.Parent = Workspace
 	drone:SetAttribute("IsDrone", true)
-
-	local light = Instance.new("PointLight")
-	light.Color = Color3.fromRGB(255, 100, 100)
-	light.Brightness = 2
-	light.Range = 10
-	light.Parent = drone
-	table.insert(state.activeDrones, drone)
+	drone:SetAttribute("DroneHP", definition.DroneHP or 50)
+	drone:SetAttribute("DroneMaxHP", definition.DroneHP or 50)
+	drone:SetAttribute("DroneOwnerShip", ship:GetAttribute("OwnerId") or 0)
+	state.activeDrones[#state.activeDrones + 1] = drone
 
 	task.spawn(function()
 		local fireTimer = 0
 		local droneEnergy = 50
-		local energyRegen = def.DroneEnergyRegen or 25
-		while drone.Parent do
-			droneEnergy = math.min(100, droneEnergy + energyRegen * 0.1)
+		while drone.Parent and ship.Parent do
+			droneEnergy = math.min(100, droneEnergy + (definition.DroneEnergyRegen or 25) * 0.1)
 			drone:SetAttribute("DroneEnergy", droneEnergy)
-			local shipPos = ship.PrimaryPart and ship.PrimaryPart.Position or ship:GetPivot().Position
+
 			local orbitRadius = 8
-			local orbitSpeed = def.DroneSpeed or 60
+			local orbitSpeed = definition.DroneSpeed or 60
 			local angle = os.clock() * (orbitSpeed / orbitRadius)
-			local targetPos = shipPos + Vector3.new(math.cos(angle) * orbitRadius, 0, math.sin(angle) * orbitRadius)
-			local direction = targetPos - drone.Position
-			if direction.Magnitude > 1 then
-				drone.AssemblyLinearVelocity = direction.Unit * orbitSpeed
-			else
-				drone.AssemblyLinearVelocity = Vector3.zero
-			end
+			local orbitTarget = getShipPosition(ship) + Vector3.new(math.cos(angle) * orbitRadius, 0, math.sin(angle) * orbitRadius)
+			local direction = orbitTarget - drone.Position
+			if direction.Magnitude > 1 then drone.AssemblyLinearVelocity = direction.Unit * orbitSpeed end
+
 			fireTimer += 0.1
-			local fireRate = def.DroneFireRate or 0.2
-			local shotEnergy = 10
-			if fireTimer >= fireRate and droneEnergy >= shotEnergy then
+			if fireTimer >= (definition.DroneFireRate or 0.2) and droneEnergy >= 10 then
 				fireTimer = 0
-				local enemy = findNearestEnemy(ship, def.DroneRange or 30)
+				local enemy = findNearestEnemy(ship, definition.DroneRange or 30)
 				if enemy then
-					droneEnergy -= shotEnergy
-					local enemyPos = enemy.PrimaryPart and enemy.PrimaryPart.Position or enemy:GetPivot().Position
+					droneEnergy -= 10
+					local targetPosition = getShipPosition(enemy)
 					local beam = Instance.new("Part")
 					beam.Name = "DroneLaser"
-					beam.Size = Vector3.new(0.15, 0.15, (enemyPos - drone.Position).Magnitude)
+					beam.Size = Vector3.new(0.15, 0.15, (targetPosition - drone.Position).Magnitude)
 					beam.Color = Color3.fromRGB(255, 50, 50)
 					beam.Material = Enum.Material.Neon
 					beam.Anchored = true
 					beam.CanCollide = false
-					local mid = (drone.Position + enemyPos) / 2
-					beam.CFrame = CFrame.lookAt(mid, enemyPos) * CFrame.Angles(math.rad(90), 0, 0)
-					beam.Parent = workspace
+					beam.CFrame = CFrame.lookAt((drone.Position + targetPosition) / 2, targetPosition) * CFrame.Angles(math.rad(90), 0, 0)
+					beam.Parent = Workspace
 					Debris:AddItem(beam, 0.1)
-					for _, part in ipairs(workspace:GetPartBoundsInRadius(enemyPos, 3)) do
-						local owner = getOwnerShip(part)
-						if owner and owner ~= ship then applyDamage(part, def.DroneDamage or 5, false, ship, enemyPos) end
+					for _, part in ipairs(Workspace:GetPartBoundsInRadius(targetPosition, 3)) do
+						local victimShip = getOwnerShip(part)
+						if victimShip and victimShip ~= ship then
+							applyDamage(part, definition.DroneDamage or 5, "Kinetic", ship, targetPosition)
+						end
 					end
 				end
 			end
@@ -585,299 +493,274 @@ local function spawnDrone(ship, weapon, def)
 	end)
 
 	drone.Touched:Connect(function(hit)
-		if hit:GetAttribute("IsPointDefence") or not drone.Parent then return end
-		local hp = drone:GetAttribute("DroneHP") or 50
-		drone:SetAttribute("DroneHP", hp - 10)
-		if hp - 10 <= 0 then drone:Destroy() end
+		if not drone.Parent or hit:GetAttribute("IsPointDefence") then return end
+		local hp = (drone:GetAttribute("DroneHP") or 50) - 10
+		drone:SetAttribute("DroneHP", hp)
+		if hp <= 0 and drone.Parent then drone:Destroy() end
 	end)
 end
 
-local pointDefenceStates = {}
-
-local function runPointDefence(ship, weapon, def)
-	if not pointDefenceStates[weapon] then pointDefenceStates[weapon] = { targets = {}, lastTargetTime = {} } end
+local function runPointDefence(ship: Model, weapon: BasePart, definition: any)
 	local state = pointDefenceStates[weapon]
-	local range = def.Range or 45
-	local dps = def.DamagePerSecond or 25
-	local targetDelay = def.TargetingDelay or 1
-	local targets = {}
+	if not state then
+		state = { lastTargetTime = {} }
+		pointDefenceStates[weapon] = state
+	end
 
-	for _, obj in ipairs(workspace:GetDescendants()) do
-		if obj:IsA("BasePart") then
-			local isTarget = false
-			if obj:GetAttribute("IsDrone") then
-				local ownerShip = obj:GetAttribute("DroneOwnerShip")
-				isTarget = ownerShip ~= (ship:GetAttribute("OwnerId") or 0)
-			end
-			if obj:GetAttribute("IsMissile") then isTarget = true end
-			if isTarget then
-				local dist = (obj.Position - weapon.Position).Magnitude
-				if dist <= range then table.insert(targets, { part = obj, distance = dist }) end
-			end
+	local range = definition.Range or 45
+	local dps = definition.DamagePerSecond or 25
+	local targetDelay = definition.TargetingDelay or 1
+	local candidates = Workspace:GetPartBoundsInRadius(weapon.Position, range)
+	local targets = table.create(#candidates)
+
+	for _, target in ipairs(candidates) do
+		local ownerId = target:GetAttribute("DroneOwnerShip")
+		local isEnemyDrone = target:GetAttribute("IsDrone") == true and ownerId ~= (ship:GetAttribute("OwnerId") or 0)
+		if isEnemyDrone or target:GetAttribute("IsMissile") == true then
+			targets[#targets + 1] = { part = target, distance = (target.Position - weapon.Position).Magnitude }
 		end
 	end
 
 	table.sort(targets, function(a, b) return a.distance < b.distance end)
-	for _, target in ipairs(targets) do
-		local targetPart = target.part
-		local lastTarget = state.lastTargetTime[targetPart] or 0
-		if os.clock() - lastTarget < targetDelay then continue end
-		if not targetPart or not targetPart.Parent then
-			state.lastTargetTime[targetPart] = nil
+	for _, entry in ipairs(targets) do
+		local target = entry.part
+		local last = state.lastTargetTime[target] or 0
+		if os.clock() - last < targetDelay then continue end
+		if not target.Parent then
+			state.lastTargetTime[target] = nil
 			continue
 		end
+		state.lastTargetTime[target] = os.clock()
 
-		state.lastTargetTime[targetPart] = os.clock()
 		local beam = Instance.new("Part")
 		beam.Name = "PointDefenceBeam"
-		beam.Size = Vector3.new(0.1, 0.1, (targetPart.Position - weapon.Position).Magnitude)
+		beam.Size = Vector3.new(0.1, 0.1, entry.distance)
 		beam.Color = Color3.fromRGB(100, 200, 255)
 		beam.Material = Enum.Material.Neon
 		beam.Anchored = true
 		beam.CanCollide = false
-		local mid = (weapon.Position + targetPart.Position) / 2
-		beam.CFrame = CFrame.lookAt(mid, targetPart.Position) * CFrame.Angles(math.rad(90), 0, 0)
-		beam.Parent = workspace
+		beam.CFrame = CFrame.lookAt((weapon.Position + target.Position) / 2, target.Position) * CFrame.Angles(math.rad(90), 0, 0)
+		beam.Parent = Workspace
 		Debris:AddItem(beam, 0.05)
 
-		if targetPart:GetAttribute("IsDrone") then
-			local hp = targetPart:GetAttribute("DroneHP") or 50
-			targetPart:SetAttribute("DroneHP", hp - dps * 0.1)
-			if hp - dps * 0.1 <= 0 then targetPart:Destroy() end
-		elseif targetPart:GetAttribute("IsMissile") then
-			local hp = targetPart:GetAttribute("MissileHP") or 25
-			targetPart:SetAttribute("MissileHP", hp - dps * 0.1)
-			if hp - dps * 0.1 <= 0 then targetPart:Destroy() end
+		if target:GetAttribute("IsDrone") then
+			local hp = (target:GetAttribute("DroneHP") or 50) - dps * 0.1
+			target:SetAttribute("DroneHP", hp)
+			if hp <= 0 then target:Destroy() end
+		elseif target:GetAttribute("IsMissile") then
+			local hp = (target:GetAttribute("MissileHP") or 25) - dps * 0.1
+			target:SetAttribute("MissileHP", hp)
+			if hp <= 0 then target:Destroy() end
 		end
 	end
 end
 
-local function spawnLaser(ship, weapon, def, aimCFrame)
-	aimCFrame = aimCFrame or weapon.CFrame
-	local startPos = getMuzzlePosition(weapon, aimCFrame)
-	local endPos = startPos + aimCFrame.LookVector * def.Range
-	SoundManager.PlayWeapon("Laser", startPos)
+local function spawnLaser(ship: Model, weapon: BasePart, definition: any, aimCFrame: CFrame)
+	local startPosition = getMuzzlePosition(weapon, aimCFrame)
+	local endPosition = startPosition + aimCFrame.LookVector * definition.Range
+	SoundManager.PlayWeapon("Laser", startPosition)
 
 	local beam = Instance.new("Part")
 	beam.Name = "LaserBeam"
-	beam.Size = Vector3.new(0.5, 0.5, def.Range)
-	beam.BrickColor = BrickColor.new(def.LaserColor)
+	beam.Size = Vector3.new(0.5, 0.5, definition.Range)
+	beam.BrickColor = BrickColor.new(definition.LaserColor)
 	beam.Material = Enum.Material.Neon
-	beam.Shape = Enum.PartShape.Cylinder
+	beam.Shape = Enum.PartType.Cylinder
 	beam.Anchored = true
 	beam.CanCollide = false
 	beam.Transparency = 0.3
-	local mid = (startPos + endPos) / 2
-	beam.CFrame = CFrame.lookAt(mid, endPos) * CFrame.Angles(math.rad(90), 0, 0)
-	beam.Position = Vector3.new(mid.X, 3.5, mid.Z)
-	beam.Parent = workspace
+	beam.CFrame = CFrame.lookAt((startPosition + endPosition) / 2, endPosition) * CFrame.Angles(math.rad(90), 0, 0)
+	beam.Parent = Workspace
 
 	local hitbox = Instance.new("Part")
 	hitbox.Name = "LaserHitbox"
-	hitbox.Size = Vector3.new(1, 1, def.Range)
+	hitbox.Size = Vector3.new(1, 1, definition.Range)
 	hitbox.Transparency = 1
-	hitbox.CanCollide = true
 	hitbox.Anchored = true
+	hitbox.CanCollide = true
 	hitbox.CFrame = beam.CFrame
-	hitbox.Position = beam.Position
-	hitbox.Parent = workspace
-	Debris:AddItem(hitbox, def.Duration or 0.3)
-	Debris:AddItem(beam, def.Duration or 0.3)
+	hitbox.Parent = Workspace
 
-	local hitSet = {}
+	local duration = definition.Duration or 0.3
+	Debris:AddItem(beam, duration)
+	Debris:AddItem(hitbox, duration)
+
 	hitbox.Touched:Connect(function(hit)
-		if not hitbox.Parent or hit:IsDescendantOf(ship) or hitSet[hit] then return end
-		hitSet[hit] = true
-		local owner = getOwnerShip(hit)
-		if owner and owner ~= ship then
-			task.spawn(function()
-				while hitbox.Parent and hit.Parent do
-					applyDamage(hit, def.Damage * 0.1, false, ship, hit.Position)
-					task.wait(0.1)
-				end
-			end)
+		if not hitbox.Parent or hit:IsDescendantOf(ship) then return end
+		local victimShip = getOwnerShip(hit)
+		if victimShip and victimShip ~= ship then
+			applyDamage(hit, definition.Damage * 0.1, "Energy", ship, hit.Position)
 		end
 	end)
 end
 
-local function scramblerPulse(ship, weapon, def)
-	local pos = weapon.Position
-	SoundManager.PlayWeapon("ScramblerPulse", pos)
+local function scramblerPulse(ship: Model, weapon: BasePart, definition: any)
+	local position = weapon.Position
+	SoundManager.PlayWeapon("ScramblerPulse", position)
+
 	local ring = Instance.new("Part")
 	ring.Name = "ScramblerRing"
-	ring.Size = Vector3.new(0.5, 3.5, 0.5)
-	ring.Shape = Enum.PartShape.Cylinder
+	ring.Size = Vector3.new(0.5, HEIGHT, 0.5)
+	ring.Shape = Enum.PartType.Cylinder
 	ring.Transparency = 0.5
-	ring.BrickColor = BrickColor.new(def.PulseColor)
+	ring.BrickColor = BrickColor.new(definition.PulseColor)
 	ring.Material = Enum.Material.Neon
 	ring.Anchored = true
-	ring.Position = Vector3.new(pos.X, 3.5, pos.Z)
-	ring.Parent = workspace
+	ring.CanCollide = false
+	ring.Position = Vector3.new(position.X, HEIGHT, position.Z)
+	ring.Parent = Workspace
 
 	task.spawn(function()
-		for i = 1, 10 do
-			local scale = def.Radius * 2 * (i / 10) / 7
-			ring.Size = Vector3.new(scale, 3.5, scale)
-			ring.Transparency = 0.5 + 0.4 * (i / 10)
+		for index = 1, 10 do
+			local scale = definition.Radius * 2 * (index / 10) / UNIT
+			ring.Size = Vector3.new(scale, HEIGHT, scale)
+			ring.Transparency = 0.5 + 0.4 * (index / 10)
 			task.wait(0.03)
 		end
 		if ring.Parent then ring:Destroy() end
 	end)
 
-	for _, part in ipairs(workspace:GetDescendants()) do
-		if part:IsA("BasePart") and part:GetAttribute("IsMissile") and part:GetAttribute("HomingActive") then
-			if (part.Position - pos).Magnitude <= def.Radius then
-				part:SetAttribute("HomingActive", false)
-				local velocity = part:FindFirstChildWhichIsA("BodyVelocity")
-				if velocity then
-					local randomDir = Vector3.new(math.random(-100, 100), 0, math.random(-100, 100))
-					if randomDir.Magnitude > 0 then velocity.Velocity = randomDir.Unit * 80 end
-				end
-			end
+	for _, target in ipairs(Workspace:GetPartBoundsInRadius(position, definition.Radius)) do
+		if target:GetAttribute("IsMissile") and target:GetAttribute("HomingActive") then
+			target:SetAttribute("HomingActive", false)
+			local direction = Vector3.new(math.random(-100, 100), 0, math.random(-100, 100))
+			if direction.Magnitude > 0 then target.AssemblyLinearVelocity = direction.Unit * 80 end
 		end
 	end
 end
 
-function RegisterShip(ship)
-	if not ship:GetAttribute("IsShip") then ship:SetAttribute("IsShip", true) end
-	ComponentAuthority.BindShip(ship)
-	StructuralAuthority.BindShip(ship)
+local function ensureShipState(ship: Model)
+	if shipEnergy[ship] then return end
 
-	local cap = CapacitorSystem.new()
-	cap:CalculateFromShip(ship)
-	shipCapacitors[ship] = cap
-
+	local capacitor = CapacitorSystem.new()
+	capacitor:CalculateFromShip(ship)
 	local shield = ShieldSystem.new()
 	shield:CalculateFromShip(ship)
-	shipShields[ship] = shield
 
+	shipCapacitors[ship] = capacitor
+	shipShields[ship] = shield
 	shipEnergy[ship] = {
-		current = cap.CurrentEnergy,
-		max = cap.MaxEnergy,
-		regen = cap.BaseRegen,
+		current = capacitor.CurrentEnergy,
+		max = capacitor.MaxEnergy,
+		regen = capacitor.BaseRegen,
 		shieldActive = shield.IsActive,
-		rechargeTimer = 0,
 	}
 end
 
+local function updateShipState(ship: Model, dt: number)
+	ensureShipState(ship)
+	local energy = shipEnergy[ship]
+	local capacitor = shipCapacitors[ship]
+	local shield = shipShields[ship]
+	if not energy then return end
+
+	if capacitor then
+		capacitor:Recharge(dt)
+		energy.current = capacitor.CurrentEnergy
+		energy.max = capacitor.MaxEnergy
+	else
+		energy.current = math.min(energy.max, energy.current + energy.regen * dt)
+	end
+
+	ship:SetAttribute("EnergyPercent", energy.max > 0 and energy.current / energy.max or 1)
+	if shield then
+		shield:Step(dt)
+		energy.shieldActive = shield.IsActive
+		ship:SetAttribute("ShieldHP", shield.CurrentHP)
+	end
+end
+
 RunService.Heartbeat:Connect(function(dt)
-	ballistics:Step(dt, function(proj, targetBody, hitPos)
-		if targetBody and targetBody.RobloxModel then
-			local victimShip = targetBody.RobloxModel
-			local shipParts = getShipParts(victimShip)
-			if #shipParts > 0 then
-				local hitPart = shipParts[math.random(1, #shipParts)]
-				applyDamage(hitPart, proj.BaseDamage, proj.DamageType, nil, Vector3.new(hitPos.X, 3.5, hitPos.Y))
-			end
-		end
+	ballistics:Step(dt, function(projectile, targetBody, hitPosition)
+		local victimShip = targetBody and targetBody.RobloxModel
+		if not victimShip then return end
+		local parts = getComponentParts(victimShip)
+		if #parts == 0 then return end
+		local hitPart = parts[math.random(1, #parts)]
+		applyDamage(hitPart, projectile.BaseDamage, projectile.DamageType, nil, hitPosition)
 	end)
 
-	for ship, data in pairs(shipEnergy) do
-		if not ship.Parent then
-			shipEnergy[ship] = nil
-			shipCapacitors[ship] = nil
-			shipShields[ship] = nil
-			continue
-		end
-
-		local cap = shipCapacitors[ship]
-		if cap then
-			cap:Recharge(dt)
-			data.current = cap.CurrentEnergy
-			data.max = cap.MaxEnergy
-			ship:SetAttribute("EnergyPercent", cap:GetEnergyPercent())
-		else
-			data.current = math.min(data.max, data.current + data.regen * dt)
-			ship:SetAttribute("EnergyPercent", data.max > 0 and (data.current / data.max) or 1.0)
-		end
-
-		local shield = shipShields[ship]
-		if shield then
-			shield:Step(dt)
-			data.shieldActive = shield.IsActive
-			ship:SetAttribute("ShieldHP", shield.CurrentHP)
-		end
-
-		for _, part in ipairs(ship:GetDescendants()) do
-			if part:IsA("BasePart") then
-				local typeName = getComponentType(part)
-				if typeName then
-					local def = Components.Types[typeName]
-					if def then
-						if typeName == "DroneBay" then
-							spawnDrone(ship, part, def)
-						elseif typeName == "PointDefence" then
-							runPointDefence(ship, part, def)
-						end
-					end
-				end
+	for _, ship in pairs(ShipRegistry.GetAll()) do
+		if not ship.Parent then continue end
+		updateShipState(ship, dt)
+		for _, part in ipairs(getComponentParts(ship)) do
+			local typeName = getComponentType(part)
+			local definition = typeName and Components.Types[typeName]
+			if typeName == "DroneBay" and definition then
+				spawnDrone(ship, part, definition)
+			elseif typeName == "PointDefence" and definition then
+				runPointDefence(ship, part, definition)
 			end
 		end
 	end
 end)
 
-FireWeaponEvent.OnServerEvent:Connect(function(player, ship, weaponName, aimDirection)
+FireWeaponEvent.OnServerEvent:Connect(function(player: Player, ship: any, weaponName: any, aimDirection: any)
 	if not checkRateLimit(player) then return end
 	local valid, err = validatePlayer(player)
 	if not valid then warn("[WeaponController] " .. err); return end
 	valid, err = validateShip(player, ship)
 	if not valid then warn("[WeaponController] " .. err); return end
 
-	local weapon, typeName, def
-	valid, err, weapon, typeName, def = validateWeaponPart(ship, weaponName)
-	if not valid then warn("[WeaponController] " .. err); return end
+	local weapon: BasePart?
+	local typeName: string?
+	local definition: any
+	valid, err, weapon, typeName, definition = validateWeaponPart(ship, weaponName)
+	if not valid or not weapon or not typeName or not definition then
+		warn("[WeaponController] " .. (err or "Invalid weapon")); return
+	end
 
-	local aimDir
-	valid, err, aimDir = validateAimDirection(aimDirection)
-	if not valid then warn("[WeaponController] " .. err); return end
+	local aimValid, aimErr, aimDir = validateAimDirection(aimDirection)
+	if not aimValid then warn("[WeaponController] " .. (aimErr or "Invalid aim direction")); return end
 
 	local now = os.clock()
-	local lastFire = weaponCooldowns[weapon] or 0
-	local cooldown = def.FireRate or def.Cooldown or 0.5
-	if now < lastFire + cooldown then return end
+	local cooldown = definition.FireRate or definition.Cooldown or 0.5
+	if now < (weaponCooldowns[weapon] or 0) + cooldown then return end
 
-	local energyData = shipEnergy[ship]
-	local powerCost = def.PowerPerShot or 0
-	if energyData and powerCost > 0 and energyData.current < powerCost then return end
-	if energyData then energyData.current -= powerCost end
+	ensureShipState(ship)
+	local energy = shipEnergy[ship]
+	local powerCost = definition.PowerPerShot or 0
+	if energy and powerCost > 0 and energy.current < powerCost then return end
+	if energy then energy.current -= powerCost end
 	weaponCooldowns[weapon] = now
 
 	local aimCFrame = aimDir and CFrame.lookAt(weapon.Position, weapon.Position + aimDir) or weapon.CFrame
 	if typeName == "MassDriver" then
-		spawnMassDriverProjectile(ship, weapon, def, aimCFrame)
+		spawnMassDriverProjectile(ship, weapon, definition, aimCFrame)
 	elseif typeName == "PlasmaBall" then
-		spawnPlasmaProjectile(ship, weapon, def, aimCFrame)
+		spawnPlasmaProjectile(ship, weapon, definition, aimCFrame)
 	elseif typeName == "PlasmaTurret" then
 		local muzzle1 = weapon:FindFirstChild("Muzzle")
 		local muzzle2 = weapon:FindFirstChild("Muzzle2")
-		spawnPlasmaProjectile(ship, weapon, def, aimCFrame, muzzle1 and muzzle1.Position or Vector3.new(0, 0, 4))
-		if muzzle2 then
-			task.wait(0.1)
-			spawnPlasmaProjectile(ship, weapon, def, aimCFrame, muzzle2.Position)
+		spawnPlasmaProjectile(ship, weapon, definition, aimCFrame, muzzle1 and muzzle1:IsA("Attachment") and muzzle1.Position or Vector3.new(0, 0, 4))
+		if muzzle2 and muzzle2:IsA("Attachment") then
+			task.delay(0.1, function()
+				if weapon.Parent then spawnPlasmaProjectile(ship, weapon, definition, aimCFrame, muzzle2.Position) end
+			end)
 		end
 	elseif typeName == "MissileLauncher" then
-		spawnMissiles(ship, weapon, def, aimCFrame)
+		spawnMissiles(ship, weapon, definition, aimCFrame)
 	elseif typeName == "DroneBay" then
-		spawnDrone(ship, weapon, def)
+		spawnDrone(ship, weapon, definition)
 	elseif typeName == "Laser" then
-		spawnLaser(ship, weapon, def, aimCFrame)
+		spawnLaser(ship, weapon, definition, aimCFrame)
 	elseif typeName == "PointDefence" then
-		runPointDefence(ship, weapon, def)
+		runPointDefence(ship, weapon, definition)
 	end
 end)
 
-FireScramblerEvent.OnServerEvent:Connect(function(player, ship, scramblerName)
+FireScramblerEvent.OnServerEvent:Connect(function(player: Player, ship: any, scramblerName: any)
 	if not checkRateLimit(player) then return end
 	local valid, err = validatePlayer(player)
 	if not valid then warn("[WeaponController] " .. err); return end
 	valid, err = validateShip(player, ship)
 	if not valid then warn("[WeaponController] " .. err); return end
-	if type(scramblerName) ~= "string" or scramblerName == "" then
+	if typeof(scramblerName) ~= "string" or scramblerName == "" then
 		warn("[WeaponController] Invalid scrambler name"); return
 	end
 
 	local scrambler = ship:FindFirstChild(scramblerName, true)
-	if not scrambler or not scrambler:IsA("BasePart") then
+	if not scrambler or not scrambler:IsA("BasePart") or not scrambler:IsDescendantOf(ship) then
 		warn("[WeaponController] Scrambler not found"); return
 	end
 
@@ -885,18 +768,21 @@ FireScramblerEvent.OnServerEvent:Connect(function(player, ship, scramblerName)
 	if typeName ~= "ScramblerPulse" then
 		warn("[WeaponController] Not a scrambler component"); return
 	end
+	local definition = Components.Types[typeName]
+	if not definition then return end
 
-	local def = Components.Types[typeName]
 	local now = os.clock()
-	local lastFire = scramblerCooldowns[scrambler] or 0
-	if now < lastFire + def.Cooldown then return end
+	local cooldown = definition.Cooldown or 0
+	if now < (scramblerCooldowns[scrambler] or 0) + cooldown then return end
 
-	local energyData = shipEnergy[ship]
-	local powerCost = def.PowerCost or 0
-	if energyData and powerCost > 0 and energyData.current < powerCost then return end
-	if energyData then energyData.current -= powerCost end
+	ensureShipState(ship)
+	local energy = shipEnergy[ship]
+	local powerCost = definition.PowerCost or 0
+	if energy and powerCost > 0 and energy.current < powerCost then return end
+	if energy then energy.current -= powerCost end
+
 	scramblerCooldowns[scrambler] = now
-	scramblerPulse(ship, scrambler, def)
+	scramblerPulse(ship, scrambler, definition)
 end)
 
-print("[WeaponController] Loaded with centralized component authority")
+print("[WeaponController] Canonical authority controller loaded")

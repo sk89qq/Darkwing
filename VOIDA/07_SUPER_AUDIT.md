@@ -1,7 +1,7 @@
 # VOIDA SUPER AUDIT — 2026-08-26
 
 ## Authority
-The supplied raw `voidhunters_decompiled` package is the authoritative first-pass forensic source. The repository manifest is `VOIDA/00_RAW_FORENSIC_REFERENCE.md`; the intact raw archive is `VOIDA/voidhunters_decompiled_raw.zip` in the user Library.
+The supplied raw `voidhunters_decompiled` package is the authoritative first-pass forensic source. The repository manifest is `VOIDA/00_RAW_FORENSIC_REFERENCE.md`; the intact raw archive is `/VOIDA/voidhunters_decompiled_raw.zip` in the user Library.
 
 No synthesized blueprint outranks the raw source. The removed `05_FORENSIC_PORT_BLUEPRINT.md` was a conflicting derived document and is not an authority.
 
@@ -13,6 +13,10 @@ No synthesized blueprint outranks the raw source. The removed `05_FORENSIC_PORT_
 - `RigidBody2D` / Roblox Assembly = physical projection subject to recovered source behavior.
 - `TeamIdentity` = Yellow/Blue team vocabulary.
 - `VoidHunterBuilderServer` = canonical blueprint persistence + blueprint construction.
+- `MissionService` = generic mission state-machine runtime.
+- `MissionConditionService` = source-confirmed mission predicate evaluator.
+- `MissionActionService` = source-confirmed mission action evaluator.
+- `RemoteManifest` = canonical remote security/index contract.
 
 Do not add subsystem-local authoritative copies.
 
@@ -52,6 +56,12 @@ Do not add subsystem-local authoritative copies.
 - `StructuralAuthority.DetachComponent` now projects the source rigid-body point velocity into the detached Roblox assembly instead of blindly copying the ship root velocity.
 - `VoidHunterDebrisManager` requires explicit component identity and no longer randomly fabricates debris component types.
 - Debris animation uses one scheduler wait per update and retains explicit component provenance.
+- `MissionTypes` defines the source-confirmed mission condition/action/state contracts.
+- `MissionConditionService` evaluates the seven source-confirmed predicates against canonical gameplay state.
+- `MissionActionService` executes the seven source-confirmed actions and delegates team mutation to `TeamIdentity`.
+- `MissionService` provides a generic tick-driven state transition host without inventing mode-specific timing.
+- `VOIDA/MISSION_SYMBOL_INDEX.md` provides stable searchable anchors for the recovered mission symbols.
+- `ReplicatedStorage/Remotes/RemoteManifest.luau` provides a canonical remote security/index contract.
 
 ## Raw-source corrections from this pass
 1. `wlb.java` directly initializes `hab.g` as 56 component-definition slots.
@@ -59,15 +69,23 @@ Do not add subsystem-local authoritative copies.
 3. `wfb.java` derives health through `lw.a(..., u)`; the repository's simplified `sqrt(area) * z / 64` helper is not sufficient to call the exact transformation raw-verified.
 4. `summary.txt` records CFR gaps in major methods. Those methods remain `RAW-GAP` until recovered from bytecode or a better decompilation.
 5. Existing `ForensicDataModel` entries that were synthesized before the raw package was available must be treated as provisional unless they can be traced directly to raw source.
-6. Raw `nbb` debris transfer behavior has now been directly recovered: the debris specialization receives the native transient motion quantities from its source body and clears those source accumulators. The Roblox port mirrors the recovered inherited kinematic state through `RigidBody2D`; the exact randomized debris-launch term and associated native scaling constants remain unresolved.
+6. Raw `nbb` debris transfer behavior has now been directly recovered: the debris specialization receives native transient motion quantities from its source body and clears those source accumulators. The Roblox port mirrors the recovered inherited kinematic state through `RigidBody2D`.
+7. The raw `ml.DA` debris path also applies a separate launch term after state inheritance. Its geometric/random structure is recovered, but caller-specific scaling remains separate from the inherited-motion implementation.
 
 ## Remaining P0
-1. Recover the exact native randomized debris-launch force/direction and any source-specific scaling constants associated with the `nbb`/component debris spawn path.
+1. **BLOCKED:** recover the exact source caller mapping for the `ml.DA` launch scalar `n2` in every destruction context. Do not map it to damage/HP/mass/force by inference.
 2. Recover exact remaining `anb` physics equations/constants that are still not structurally available from the supplied decompilation before declaring full Roblox physics parity.
-3. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
+3. Complete raw per-mode `MissionBuilder` / `MissionControl` sequencing from recovered source data before replacing the Arena prototype as the runtime mode authority.
 4. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
 5. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.
 6. Prove all externally referenced compatibility facades have no remaining live callers, then delete `VoidHunterBlueprintSystem` and `VoidHunterSyncManager` rather than retaining unnecessary compatibility surface.
+
+## Mission/network lookahead status
+- Mission framework infrastructure: `IMPLEMENTED / PARTIAL`.
+- Mission symbol indexing: `IMPLEMENTED`.
+- Remote security manifest: `IMPLEMENTED / PARTIAL`.
+- Exact original game-mode state machines: `RAW-GAP / PARTIAL`.
+- Full remote penetration/Studio runtime acceptance: `NOT VERIFIED`.
 
 ## Source-truth discipline
 The raw package is evidence. The implementation must preserve uncertainty where the decompilation is uncertain.
@@ -75,14 +93,12 @@ The raw package is evidence. The implementation must preserve uncertainty where 
 Do not promote implementation compatibility into `VERIFIED` without acceptance testing and source evidence.
 
 ## Efficiency protocol
-Before changing a mechanic:
-1. Read `VOIDA/00_RAW_FORENSIC_REFERENCE.md`.
-2. Read the relevant raw class/method from the supplied archive.
-3. Read the relevant AGENTS directive/reference.
-4. Search the repository for an existing authoritative implementation.
-5. Replace deprecated callers rather than creating a parallel system.
-6. Use repository-wide replacement for purely lexical deprecated symbols when the replacement is unambiguous.
-7. Re-scan affected code and update status documentation.
+When a path is blocked by incomplete source/tooling:
+1. Record the exact blocker and evidence.
+2. Mark the narrow question `BLOCKED`.
+3. Do not invent a replacement value.
+4. Continue to the next independent goal.
+5. Return to the blocked item only when new evidence makes it tractable.
 
 For every resolved issue record:
 

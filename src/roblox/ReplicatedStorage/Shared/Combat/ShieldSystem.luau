@@ -44,23 +44,18 @@ function ShieldSystem:CalculateFromShip(shipModel: Model)
 
 	for _, part in ipairs(shipModel:GetDescendants()) do
 		if part:IsA("BasePart") and not part:GetAttribute("IsDebris") then
-			local capacity = part:GetAttribute("ShieldCapacity")
-			local regen = part:GetAttribute("ShieldRegen")
-			if typeof(capacity) == "number" then totalShield += capacity end
-			if typeof(regen) == "number" then totalRegen += regen end
-		end
-	end
-
-	if totalShield <= 0 then
-		-- Compatibility fallback retained for the prototype; exact component-based
-		-- shield capacity remains an explicit reconciliation task.
-		for _, part in ipairs(shipModel:GetDescendants()) do
-			if part:IsA("BasePart") and not part:GetAttribute("IsDebris") then
-				local pName = part.Name
-				if string.find(pName, "Shield") or string.find(pName, "Deflector") then
-					totalShield += 100.0
-					totalRegen += 10.0
-				end
+			local typeName = part:GetAttribute("ComponentType")
+			local definition = typeof(typeName) == "string"
+				and shipModel:IsDescendantOf(game)
+				and require(game.ReplicatedStorage:WaitForChild("VoidHunterComponents")).Types[typeName]
+				or nil
+			if type(definition) == "table" then
+				local capacity = definition.ShieldCapacity
+				local regen = definition.ShieldRegen
+				local radius = definition.ShieldRadius
+				if typeof(capacity) == "number" and capacity > 0 then totalShield += capacity end
+				if typeof(regen) == "number" and regen > 0 then totalRegen += regen end
+				if typeof(radius) == "number" and radius > maxRadius then maxRadius = radius end
 			end
 		end
 	end

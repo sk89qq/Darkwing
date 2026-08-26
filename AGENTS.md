@@ -51,13 +51,17 @@ Canonical logical state boundaries:
 
 - `ReplicatedStorage.Shared.Combat.ComponentAuthority` owns per-component runtime state: type, HP, max HP, parent/children, connection state, destroyed/critical state, and immutable base visual color.
 - `ReplicatedStorage.Shared.Ship.StructuralAuthority` is the mutation boundary for attach, detach, replacement, and structural severance.
+- `ReplicatedStorage.Shared.Ship.ShipRegistry` owns the authoritative player <-> ship runtime relationship.
 - `ReplicatedStorage.Shared.ShipSocketGraph` remains the hardpoint/socket solver and graph index.
 - `ReplicatedStorage.Shared.Physics.RigidBody2D` remains the logical 2D body solver where a native Roblox Assembly cannot reproduce the original observable behavior exactly.
-- Server systems are authoritative for combat, damage, graph mutation, match state, and persistence.
+- `ReplicatedStorage.Shared.Combat.TeamIdentity` owns the Yellow/Blue team vocabulary and validation.
+- Server systems are authoritative for combat, damage, graph mutation, ship lifecycle, match state, and persistence.
 
-Do not create subsystem-local authoritative dictionaries for the same state (for example a second `partHealth[part]` map). Subsystems consume/update `ComponentAuthority` instead.
+Do not create subsystem-local authoritative dictionaries for the same state (for example a second `partHealth[part]` map or a second player -> ship map). Subsystems consume/update the canonical authority services instead.
 
 Attributes on Instances are **mirrors/diagnostics**, not the authoritative source of gameplay state.
+
+For Roblox/Luau idioms, service/container naming, bulk refactor rules, remotes, typing, cleanup, physics, and fast implementation patterns, use `VOIDA/10_ROBLOX_LUAU_REFERENCE.md`.
 
 ---
 
@@ -130,7 +134,7 @@ Preferred placement:
 
 Use ModuleScripts for reusable logic, RemoteEvents/RemoteFunctions only at explicit network boundaries, and CollectionService/Attributes for discovery/diagnostics rather than hidden global state.
 
-Avoid `_G` for new systems. Existing `_G` compatibility may remain until the corresponding system is migrated to explicit ModuleScript references.
+Avoid `_G` for new systems. Existing `_G` compatibility may remain only where migration has not yet been completed and the compatibility surface is explicitly documented.
 
 ---
 
@@ -158,6 +162,7 @@ Server is authoritative for:
 - repair application
 - structural detach/severance
 - debris conversion
+- ship lifecycle
 - weapon/projectile hit confirmation
 - energy consumption when gameplay-relevant
 - match state

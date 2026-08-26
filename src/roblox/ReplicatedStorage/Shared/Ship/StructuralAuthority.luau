@@ -5,6 +5,13 @@
 	ShipSocketGraph remains the socket/geometry solver. This service is the only
 	runtime boundary intended to perform structural attach, detach, replacement,
 	and severance.
+
+	Physics boundary:
+	- Logical graph mutation remains authoritative.
+	- Detached assemblies inherit rigid-body point kinematics from the source ship.
+	- No arbitrary detachment impulse is introduced here.
+	- Native debris launch terms remain a separate forensic mapping until their
+	  source constants and call context are completely recovered.
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -13,6 +20,7 @@ local Workspace = game:GetService("Workspace")
 local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"))
 local ShipSocketGraph = require(ReplicatedStorage.Shared:WaitForChild("ShipSocketGraph"))
 local ComponentAuthority = require(ReplicatedStorage.Shared.Combat:WaitForChild("ComponentAuthority"))
+local RigidBody2D = require(ReplicatedStorage.Shared.Physics:WaitForChild("RigidBody2D"))
 
 local StructuralAuthority = {}
 StructuralAuthority.__index = StructuralAuthority
@@ -106,6 +114,22 @@ local function alignPartToSocket(parentNode: any, parentSocket: any, childPart: 
 	childPart.CFrame = targetCF * CFrame.new(-childSocketOffset)
 end
 
+local function createSourceRigidBody(ship: Model): any?
+	local primaryPart = ship.PrimaryPart
+	if not primaryPart then
+		return nil
+	end
+
+	local body = RigidBody2D.new(
+		Vector2.new(primaryPart.Position.X, primaryPart.Position.Z),
+		0,
+		ship:GetAttribute("ShipId")
+	)
+	body.Velocity = Vector2.new(primaryPart.AssemblyLinearVelocity.X, primaryPart.AssemblyLinearVelocity.Z)
+	body.AngularVelocity = primaryPart.AssemblyAngularVelocity.Y
+	return body
+end
+
 function StructuralAuthority.BuildGraph(ship: Model): any
 	assert(ship and ship:IsA("Model"), "StructuralAuthority.BuildGraph expects a ship Model")
 	return ShipSocketGraph.new(ship)
@@ -173,6 +197,8 @@ function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason
 		return nil
 	end
 
+	local sourceBody = createSourceRigidBody(ship)
+
 	disconnectExternalWelds(parts)
 
 	local debrisAssembly = Instance.new("Model")
@@ -182,25 +208,32 @@ function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason
 	debrisAssembly:SetAttribute("SourceShipId", ship:GetAttribute("ShipId") or ship.Name)
 	debrisAssembly.Parent = getDebrisFolder()
 
-	local sourceVelocity = Vector3.zero
-	local sourceAngular = Vector3.zero
-	if ship.PrimaryPart then
-		sourceVelocity = ship.PrimaryPart.AssemblyLinearVelocity
-		sourceAngular = ship.PrimaryPart.AssemblyAngularVelocity
-	end
-
 	for _, detachedPart in ipairs(parts) do
 		detachedPart:SetAttribute("IsDebris", true)
 		detachedPart:SetAttribute("ComponentDetached", true)
+		detachedPart:SetAttribute("ComponentType", detachedPart:GetAttribute("ComponentType"))
 		ComponentAuthority.SetParent(detachedPart, nil)
 		detachedPart.Parent = debrisAssembly
 	end
 
 	debrisAssembly.PrimaryPart = parts[1]
+
+	local inheritedVelocity = Vector3.zero
+	local inheritedAngularVelocity = Vector3.zero
+	if sourceBody then
+		local rootNode = graph.Nodes[graph.RootNodeId]
+		if rootNode and rootNode.Part then
+			local localOrigin = rootNode.Part.CFrame:PointToObjectSpace(part.Position)
+			local pointVelocity = sourceBody:GetWorldPointVelocity(Vector2.new(localOrigin.X, localOrigin.Z))
+			inheritedVelocity = Vector3.new(pointVelocity.X, 0, pointVelocity.Y)
+			inheritedAngularVelocity = Vector3.new(0, sourceBody.AngularVelocity, 0)
+		end
+	end
+
 	for _, detachedPart in ipairs(parts) do
 		detachedPart.Anchored = false
-		detachedPart.AssemblyLinearVelocity = sourceVelocity
-		detachedPart.AssemblyAngularVelocity = sourceAngular
+		detachedPart.AssemblyLinearVelocity = inheritedVelocity
+		detachedPart.AssemblyAngularVelocity = inheritedAngularVelocity
 	end
 
 	return debrisAssembly
@@ -264,7 +297,6 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		return nil, false
 	end
 
-	-- Phase 1: capture the exact authoritative relationship before any mutation.
 	local graph = StructuralAuthority.BuildGraph(ship)
 	local oldNodeId = oldPart:GetAttribute("NodeId")
 	local oldNode = oldNodeId and graph.Nodes[oldNodeId]
@@ -281,8 +313,6 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		return nil, false
 	end
 
-	-- The existing child owns the socket. Replacement is allowed to consume that
-	-- same socket, but a different hardpoint is never silently selected.
 	local childSocketId = getCompatibleOutSocket(graph, parentNode, parentSocket, oldPart, componentType)
 	if not childSocketId then
 		return nil, false
@@ -304,14 +334,11 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		ComponentDetached = oldPart:GetAttribute("ComponentDetached"),
 	}
 
-	-- Phase 2: remove the old subtree. No mutation occurred before the candidate was validated.
 	local detached = StructuralAuthority.DetachComponent(ship, oldPart, "Replacement")
 	if not detached then
 		return nil, false
 	end
 
-	-- Phase 3: re-resolve the preserved parent socket in the post-detach graph and
-	-- attach exactly there, not through proximity-based reselection.
 	local replacementGraph = StructuralAuthority.BuildGraph(ship)
 	local replacementParent = replacementGraph.Nodes[oldParentId]
 	local replacementSocket = replacementParent and replacementParent.Sockets[oldParentSocketId]
@@ -335,8 +362,6 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		return detached, true
 	end
 
-	-- Phase 4: rollback. The original subtree is restored; no partially attached
-	-- replacement remains authoritative.
 	if newPart.Parent == ship then
 		newPart.Parent = nil
 	end

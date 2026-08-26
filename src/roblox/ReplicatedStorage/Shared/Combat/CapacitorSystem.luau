@@ -5,6 +5,7 @@
 	- Component identity is explicit ComponentType metadata.
 	- Component configuration comes from VoidHunterComponents.Types.
 	- Instance.Name is never used as gameplay state or component identity.
+	- One CapacitorSystem object is authoritative for each registered ship.
 	- Exact source numerical parity remains IMPLEMENTED / PARTIAL where the
 	  decompiled power equations are not fully recovered.
 ]=]
@@ -19,6 +20,8 @@ local DEFAULT_MAX_ENERGY = 100
 local DEFAULT_BASE_REGEN = 8
 local BROWNOUT_THRESHOLD = 5
 local OVERCHARGE_MULTIPLIER = 1.25
+
+local shipCapacitors: { [Model]: any } = setmetatable({}, { __mode = "k" })
 
 local function getDefinition(part: Instance): any?
 	if not part:IsA("BasePart") then
@@ -46,6 +49,7 @@ function CapacitorSystem:CalculateFromShip(shipModel: Model)
 		return
 	end
 
+	local previousMax = self.MaxEnergy
 	local totalRegen = 0
 	local totalCapacityBoost = 0
 	local hasPowerComponent = false
@@ -56,7 +60,7 @@ function CapacitorSystem:CalculateFromShip(shipModel: Model)
 			local energyRegen = definition.EnergyRegen
 			if typeof(energyRegen) == "number" and energyRegen > 0 then
 				totalRegen += energyRegen
-			hasPowerComponent = true
+				hasPowerComponent = true
 			end
 
 			local maxEnergyBoost = definition.MaxEnergyBoost
@@ -73,8 +77,6 @@ function CapacitorSystem:CalculateFromShip(shipModel: Model)
 		end
 	end
 
-	-- The base 100 energy pool is an existing prototype rule, not a component
-	-- identity inference. Component definitions may explicitly extend it.
 	if hasPowerComponent then
 		self.MaxEnergy = DEFAULT_MAX_ENERGY + totalCapacityBoost
 		self.BaseRegen = totalRegen > 0 and totalRegen or DEFAULT_BASE_REGEN
@@ -83,8 +85,36 @@ function CapacitorSystem:CalculateFromShip(shipModel: Model)
 		self.BaseRegen = DEFAULT_BASE_REGEN
 	end
 
-	self.CurrentEnergy = math.clamp(self.CurrentEnergy, 0, self.MaxEnergy)
+	if previousMax > 0 and self.CurrentEnergy == previousMax then
+		self.CurrentEnergy = self.MaxEnergy
+	else
+		self.CurrentEnergy = math.clamp(self.CurrentEnergy, 0, self.MaxEnergy)
+	end
 	self.OverchargeCapacity = self.MaxEnergy * OVERCHARGE_MULTIPLIER
+end
+
+function CapacitorSystem.RegisterShip(shipModel: Model): any
+	assert(shipModel and shipModel:IsA("Model"), "CapacitorSystem.RegisterShip expects a ship Model")
+
+	local existing = shipCapacitors[shipModel]
+	if existing then
+		return existing
+	end
+
+	local capacitor = CapacitorSystem.new()
+	capacitor:CalculateFromShip(shipModel)
+	shipCapacitors[shipModel] = capacitor
+	shipModel:SetAttribute("EnergyPercent", capacitor:GetEnergyPercent())
+	shipModel:SetAttribute("EnergyCapacity", capacitor.MaxEnergy)
+	return capacitor
+end
+
+function CapacitorSystem.GetForShip(shipModel: Model): any?
+	return shipCapacitors[shipModel]
+end
+
+function CapacitorSystem.UnregisterShip(shipModel: Model)
+	shipCapacitors[shipModel] = nil
 end
 
 function CapacitorSystem:Consume(amount: number): boolean

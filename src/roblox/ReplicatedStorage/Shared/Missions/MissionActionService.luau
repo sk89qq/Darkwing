@@ -58,10 +58,7 @@ function MissionActionService.Execute(context: MissionTypes.MissionRuntimeContex
 	end
 
 	if action.Type == "AwardVictory" then
-		if type(value) ~= "string" then
-			return false
-		end
-		if value ~= TeamIdentity.YELLOW and value ~= TeamIdentity.BLUE then
+		if type(value) ~= "string" or not TeamIdentity.IsValid(value) then
 			return false
 		end
 		context.VictoryTeam = value
@@ -96,10 +93,10 @@ function MissionActionService.Execute(context: MissionTypes.MissionRuntimeContex
 		if type(value) ~= "table" or typeof(value.Node) ~= "Instance" or not value.Node:IsA("Model") then
 			return false
 		end
-		if value.Team ~= TeamIdentity.YELLOW and value.Team ~= TeamIdentity.BLUE then
+		if not TeamIdentity.IsValid(value.Team) then
 			return false
 		end
-		value.Node:SetAttribute("Team", value.Team)
+		TeamIdentity.Set(value.Node, value.Team)
 		return true
 	end
 

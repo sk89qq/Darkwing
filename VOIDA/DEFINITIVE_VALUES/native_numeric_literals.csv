@@ -1,0 +1,8 @@
+native_class,literal_type,constant_pool_index,value
+VoidHunters,Integer,1,-2147483648
+VoidHunters,Integer,2,2147483647
+VoidHunters,Integer,3,0
+VoidHunters,Integer,4,1
+VoidHunters,Float,5,1.0
+VoidHunters,Double,6,3.141592653589793
+VoidHunters,Long,7,0

@@ -20,6 +20,13 @@ Do not add subsystem-local authoritative copies.
 - Ship lookup no longer uses a private spawner map; it uses `ShipRegistry`.
 - Ship spawning/lifecycle now uses `TeamIdentity` and `StructuralAuthority.BindShip`.
 - The fabricated 40%-HP / 80%-HP clone-salvage path was removed from the spawner because it was not supported by the raw component-debris path.
+- `VoidHunterWeaponController` no longer contains `partHealth` / `partMaxHealth` compatibility tables.
+- `VoidHunterWeaponController` no longer uses `activeShips`; ownership resolves through `ShipRegistry`.
+- Combat component type resolution now uses `ComponentAuthority` state + `Components.Types` rather than name scanning in the controller.
+- Hull classification now uses authoritative component definition `IsHull` metadata.
+- Nearest-enemy ship lookup uses `ShipRegistry.GetAll()` instead of a global workspace model scan.
+- Transient point-defence/scrambler scans use `Workspace:GetPartBoundsInRadius`.
+- New weapon-controller scheduling uses `task.spawn`, `task.delay`, and `task.wait`.
 - `VOIDA/10_ROBLOX_LUAU_REFERENCE.md` is the standing implementation-style reference, subordinate to raw source semantics.
 
 ## Raw-source corrections from this pass
@@ -30,16 +37,15 @@ Do not add subsystem-local authoritative copies.
 5. Existing `ForensicDataModel` entries that were synthesized before the raw package was available must be treated as provisional unless they can be traced directly to raw source.
 
 ## Remaining P0
-1. Remove the remaining `partHealth` / `partMaxHealth` compatibility surface from `VoidHunterWeaponController` after all callers are confirmed to use `ComponentAuthority` directly.
-2. Remove generic four-way socket fallback from `ShipSocketGraph`; unknown component definitions must fail closed.
-3. Make structural replacement atomic: validate candidate hardpoint/connection before mutating the existing structure.
-4. Stop treating weld/proximity reconstruction as authoritative topology when explicit hardpoint metadata exists.
-5. Consolidate blueprint persistence/build systems onto one authoritative implementation without inventing behavior.
-6. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
-7. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
-8. Replace remaining name/type heuristics in shield, power, repair, and combat systems with authoritative component definitions/data.
-9. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
-10. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
+1. Remove generic four-way socket fallback from `ShipSocketGraph`; unknown component definitions must fail closed.
+2. Make structural replacement atomic: validate candidate hardpoint/connection before mutating the existing structure.
+3. Stop treating weld/proximity reconstruction as authoritative topology when explicit hardpoint metadata exists.
+4. Consolidate blueprint persistence/build systems onto one authoritative implementation without inventing behavior.
+5. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
+6. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
+7. Replace remaining name/type heuristics in shield, power, repair, and combat systems with authoritative component definitions/data.
+8. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
+9. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
 
 ## Source-truth discipline
 The raw package is evidence. The implementation must preserve uncertainty where the decompilation is uncertain.

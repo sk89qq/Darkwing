@@ -8,6 +8,7 @@
 	  - Swept segment collision checks to prevent tunneling
 	  - Nearest-hit selection along the projectile segment
 	  - Roblox Workspace raycast fallback when no logical PhysicsWorld is attached
+	  - Preserve the actual collision part for authoritative component damage
 	  - Momentum-style impulse delivery to hit logical bodies when supported
 	  - Homing missile guidance with bounded angular turn rate
 	  - Deterministic projectile lifetime/range cleanup
@@ -46,7 +47,6 @@ local function findSegmentBodyHit(startPoint: Vector2, endPoint: Vector2, bodies
 				local candidateTravel = segmentLength * segmentT
 				if candidateTravel < bestTravel then
 					local direction = endPoint - startPoint
-					local directionUnit = direction.Magnitude > 0 and direction.Unit or Vector2.yAxis
 					local hitOffset = math.sqrt(math.max(radius * radius - distanceToSegment * distanceToSegment, 0))
 					local hitT = math.clamp(segmentT - hitOffset / math.max(segmentLength, 0.000001), 0, 1)
 					bestTravel = candidateTravel
@@ -96,6 +96,7 @@ local function findRobloxRaycastHit(startPoint: Vector2, endPoint: Vector2, shoo
 		BoundingRadius = 0,
 		Position = Vector2.new(hitModel:GetPivot().Position.X, hitModel:GetPivot().Position.Z),
 		RobloxModel = hitModel,
+		RobloxPart = result.Instance,
 	}
 	return body, Vector2.new(result.Position.X, result.Position.Z)
 end
@@ -195,7 +196,6 @@ function BallisticsEngine:Step(dt: number, onHitCallback: ((CombatTypes.Projecti
 		local stepDist = stepMovement.Magnitude
 		proj.DistanceTraveled += stepDist
 
-		local hitOccurred = false
 		local hitBody: any = nil
 		local hitPosition = nextPos
 		if self.PhysicsWorld and self.PhysicsWorld.BodyList then
@@ -204,13 +204,13 @@ function BallisticsEngine:Step(dt: number, onHitCallback: ((CombatTypes.Projecti
 			hitBody, hitPosition = findRobloxRaycastHit(startPos, nextPos, proj.ShooterId)
 		end
 
-		if hitBody and hitPosition then
-			hitOccurred = true
+		local hitOccurred = hitBody ~= nil and hitPosition ~= nil
+		if hitOccurred then
 			if hitBody.ApplyImpulseAtWorldPoint then
 				hitBody:ApplyImpulseAtWorldPoint(proj.Velocity.Unit * proj.ImpulseMagnitude, hitPosition)
 			end
 			if onHitCallback then
-				onHitCallback(proj, hitBody, hitPosition)
+				onHitCallback(proj, hitBody, hitPosition :: Vector2)
 			end
 		end
 

@@ -1,10 +1,9 @@
 # VOIDA Runtime Audit Actions — 2026-08-26
 
-## Authority order
-1. `VOIDA/00_FORENSIC_ENGINEER_BLUEPRINT.md` — authoritative first-pass forensic contract.
-2. `AGENTS.md` — implementation and authority rules.
-3. `VOIDA/09_AUTHORITY_CENSUS.md` — repository authority findings/deltas.
-4. `VOIDA/10_ROBLOX_LUAU_REFERENCE.md` — Roblox/Luau implementation reference.
+## Authoritative source
+- Raw supplied archive: `/VOIDA/voidhunters_decompiled_raw.zip` in Library.
+- Repository manifest: `VOIDA/00_RAW_FORENSIC_REFERENCE.md`.
+- Raw source takes precedence over synthesized blueprints and inferred implementation values.
 
 ## Completed
 
@@ -24,10 +23,11 @@
 - AutoBuild routes attachment through `StructuralAuthority`.
 - Legacy `Components` input remains a migration input only; new saves use V2.
 
-### Provenance
-- Inferred shield/capacitor values remain explicitly `[INFERRED]`.
-- Arena remains prototype/partial parity.
-- The authoritative first-pass blueprint forbids guessing unrecovered data.
+### Provenance corrections from raw package
+- Raw `wfb/lw/eo` health derivation is source-specific; simplified square-root helpers are not treated as exact raw behavior.
+- `wlb.java` initializes 56 definition slots, but many slots are generated from dependent expressions and must not be reduced to guessed literals.
+- CFR-unstructured methods remain `RAW-GAP` until reconstructed from bytecode or better decompilation.
+- Any generated data entry without direct raw provenance must remain `RAW-GAP` / `INFERRED` rather than `[CODE_VERIFIED]`.
 
 ## Remaining P0
 
@@ -50,7 +50,7 @@
 
 ## Future-agent protocol
 
-Read `VOIDA/00_FORENSIC_ENGINEER_BLUEPRINT.md` first. Work only on the highest unresolved item. Do not reopen a completed item unless new source evidence contradicts it.
+Read `VOIDA/00_RAW_FORENSIC_REFERENCE.md` first. Then inspect the smallest relevant raw class/method needed to close the delta. Work only on the highest unresolved item. Do not reopen a completed item unless new source evidence contradicts it.
 
 For each fix:
 

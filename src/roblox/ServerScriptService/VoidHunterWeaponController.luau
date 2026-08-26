@@ -278,79 +278,92 @@ local function applyDamage(part: BasePart, damage: number, damageType: CombatTyp
 	end
 end
 
-local function spawnMassDriverProjectile(ship: Model, weapon: BasePart, definition: any, aimCFrame: CFrame)
-	local projectile = Instance.new("Part")
-	projectile.Name = "MD_Projectile"
-	projectile.Size = definition.ProjectileSize or Vector3.new(0.5, 0.3, 1)
-	projectile.BrickColor = BrickColor.new(definition.ProjectileColor)
-	projectile.Material = Enum.Material.Neon
-	projectile.Shape = Enum.PartType.Cylinder
-	projectile.CFrame = aimCFrame
-	projectile.Anchored = false
-	projectile.CanCollide = true
-	projectile.Parent = Workspace
-	projectile.AssemblyLinearVelocity = aimCFrame.LookVector * definition.ProjectileSpeed
-	Debris:AddItem(projectile, definition.Range / math.max(definition.ProjectileSpeed, 1))
-	SoundManager.PlayWeapon("MassDriver", projectile.Position)
+local function getShipInheritedVelocity(ship: Model): Vector2
+	local primaryPart = ship.PrimaryPart
+	if not primaryPart then
+		return Vector2.zero
+	end
+	local velocity = primaryPart.AssemblyLinearVelocity
+	return Vector2.new(velocity.X, velocity.Z)
+end
 
-	projectile.Touched:Connect(function(hit)
-		if not projectile.Parent or hit:IsDescendantOf(ship) then
-			return
-		end
-		local victimShip = getOwnerShip(hit)
-		if victimShip and victimShip ~= ship then
-			applyDamage(hit, definition.Damage, "Kinetic", ship, projectile.Position)
-			if projectile.Parent then projectile:Destroy() end
-		end
-	end)
+local function spawnBallisticVisual(name: string, position: Vector3, size: Vector3, color: Color3, shape: Enum.PartType): BasePart
+	local projectile = Instance.new("Part")
+	projectile.Name = name
+	projectile.Size = size
+	projectile.Color = color
+	projectile.Material = Enum.Material.Neon
+	projectile.Shape = shape
+	projectile.CFrame = CFrame.new(position)
+	projectile.Anchored = true
+	projectile.CanCollide = false
+	projectile.CanTouch = false
+	projectile.CanQuery = false
+	projectile.Parent = Workspace
+	return projectile
+end
+
+local function spawnMassDriverProjectile(ship: Model, weapon: BasePart, definition: any, aimCFrame: CFrame)
+	local spawnPosition = getMuzzlePosition(weapon, aimCFrame)
+	local visual = spawnBallisticVisual(
+		"MD_Projectile",
+		spawnPosition,
+		definition.ProjectileSize or Vector3.new(0.5, 0.3, 1),
+		Color3.fromRGB(255, 255, 255),
+		Enum.PartType.Cylinder
+	)
+
+	local aimDirection = aimCFrame.LookVector
+	ballistics:SpawnProjectile({
+		Type = "MassDriver",
+		DamageType = "Kinetic",
+		Damage = definition.Damage,
+		Speed = definition.ProjectileSpeed,
+		Range = definition.Range,
+		Origin2D = Vector2.new(spawnPosition.X, spawnPosition.Z),
+		Direction2D = Vector2.new(aimDirection.X, aimDirection.Z),
+		InheritedVelocity = getShipInheritedVelocity(ship),
+		ShooterId = tostring(ship:GetAttribute("ShipId") or ship.Name),
+		ShooterTeam = TeamIdentity.Get(ship),
+		Color = visual.Color,
+		Size = visual.Size,
+		VisualModel = visual,
+		ImpulseMagnitude = definition.Damage * 12,
+	})
+	SoundManager.PlayWeapon("MassDriver", spawnPosition)
 end
 
 local function spawnPlasmaProjectile(ship: Model, weapon: BasePart, definition: any, aimCFrame: CFrame, muzzleOffset: Vector3?)
 	local position = muzzleOffset and weapon.CFrame:PointToWorldSpace(muzzleOffset) or getMuzzlePosition(weapon, aimCFrame)
-	local projectile = Instance.new("Part")
-	projectile.Name = "Plasma_Projectile"
-	projectile.Size = Vector3.one * 2
-	projectile.BrickColor = BrickColor.new(definition.ProjectileColor)
-	projectile.Material = Enum.Material.Neon
-	projectile.Shape = Enum.PartType.Ball
-	projectile.CFrame = CFrame.new(position)
-	projectile.Anchored = false
-	projectile.CanCollide = true
-	projectile.Parent = Workspace
-	projectile:SetAttribute("IsPlasma", true)
-	projectile.AssemblyLinearVelocity = aimCFrame.LookVector * definition.ProjectileSpeed
+	local visual = spawnBallisticVisual("Plasma_Projectile", position, Vector3.one * 2, definition.ProjectileColor, Enum.PartType.Ball)
+	visual:SetAttribute("IsPlasma", true)
 
 	local light = Instance.new("PointLight")
 	light.Brightness = 3
 	light.Range = 8
 	light.Color = definition.ProjectileColor
-	light.Parent = projectile
+	light.Parent = visual
+
+	local aimDirection = aimCFrame.LookVector
+	ballistics:SpawnProjectile({
+		Type = "PlasmaBall",
+		DamageType = "Thermal",
+		Damage = (definition.TickDamage or definition.Damage) * 0.5,
+		TickDamage = definition.TickDamage,
+		Range = definition.Range,
+		Speed = definition.ProjectileSpeed,
+		SplashRadius = 4,
+		Origin2D = Vector2.new(position.X, position.Z),
+		Direction2D = Vector2.new(aimDirection.X, aimDirection.Z),
+		InheritedVelocity = getShipInheritedVelocity(ship),
+		ShooterId = tostring(ship:GetAttribute("ShipId") or ship.Name),
+		ShooterTeam = TeamIdentity.Get(ship),
+		Color = definition.ProjectileColor,
+		Size = visual.Size,
+		VisualModel = visual,
+		ImpulseMagnitude = definition.Damage * 12,
+	})
 	SoundManager.PlayWeapon("PlasmaBall", position)
-
-	local touchedParts: { [BasePart]: boolean } = {}
-	projectile.Touched:Connect(function(hit)
-		if not projectile.Parent or hit:IsDescendantOf(ship) or touchedParts[hit] then
-			return
-		end
-		touchedParts[hit] = true
-		local victimShip = getOwnerShip(hit)
-		if victimShip and victimShip ~= ship then
-			applyDamage(hit, (definition.TickDamage or definition.Damage) * 0.5, "Thermal", ship, projectile.Position)
-		end
-	end)
-
-	local lifetime = definition.Range / math.max(definition.ProjectileSpeed, 1)
-	Debris:AddItem(projectile, lifetime)
-	task.delay(lifetime, function()
-		if not projectile.Parent then return end
-		for _, part in ipairs(Workspace:GetPartBoundsInRadius(projectile.Position, 4)) do
-			local victimShip = getOwnerShip(part)
-			if victimShip and victimShip ~= ship then
-				applyDamage(part, definition.Damage, "Thermal", ship, projectile.Position)
-			end
-		end
-		if projectile.Parent then projectile:Destroy() end
-	end)
 end
 
 local function spawnMissiles(ship: Model, weapon: BasePart, definition: any, aimCFrame: CFrame)

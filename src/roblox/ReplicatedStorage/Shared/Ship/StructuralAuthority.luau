@@ -21,6 +21,8 @@ local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"
 local ShipSocketGraph = require(ReplicatedStorage.Shared:WaitForChild("ShipSocketGraph"))
 local ComponentAuthority = require(ReplicatedStorage.Shared.Combat:WaitForChild("ComponentAuthority"))
 local RigidBody2D = require(ReplicatedStorage.Shared.Physics:WaitForChild("RigidBody2D"))
+local MassPoint = require(ReplicatedStorage.Shared.Physics:WaitForChild("MassPoint"))
+local PhysicsConfig = require(ReplicatedStorage.Shared.Physics:WaitForChild("PhysicsConfig"))
 local BodyRecomputeService = require(ReplicatedStorage.Shared.Physics:WaitForChild("BodyRecomputeService"))
 
 local StructuralAuthority = {}
@@ -115,6 +117,25 @@ local function alignPartToSocket(parentNode: any, parentSocket: any, childPart: 
 	childPart.CFrame = targetCF * CFrame.new(-childSocketOffset)
 end
 
+local function getCanonicalComponentMass(part: BasePart): number
+	local state = ComponentAuthority.Get(part) or ComponentAuthority.Bind(part)
+	local definition = state and Components.Types[state.TypeName]
+	if definition then
+		for _, value in ipairs({ definition.Mass, definition.PhysicsMass, definition.BodyMass }) do
+			if typeof(value) == "number" and value > 0 and value ~= math.huge then
+				return value
+			end
+		end
+	end
+
+	local instanceMass = part:GetAttribute("ComponentMass")
+	if typeof(instanceMass) == "number" and instanceMass > 0 and instanceMass ~= math.huge then
+		return instanceMass
+	end
+
+	return PhysicsConfig.DEFAULT_PIECE_MASS
+end
+
 local function createSourceRigidBody(ship: Model): any?
 	local primaryPart = ship.PrimaryPart
 	if not primaryPart then
@@ -128,6 +149,25 @@ local function createSourceRigidBody(ship: Model): any?
 	)
 	body.Velocity = Vector2.new(primaryPart.AssemblyLinearVelocity.X, primaryPart.AssemblyLinearVelocity.Z)
 	body.AngularVelocity = primaryPart.AssemblyAngularVelocity.Y
+
+	local pivot = ship:GetPivot()
+	for _, instance in ipairs(ship:GetDescendants()) do
+		if instance:IsA("BasePart") and not instance:IsA("VehicleSeat") and ComponentAuthority.IsComponent(instance) then
+			local localPosition3D = pivot:PointToObjectSpace(instance.Position)
+			local localPosition = Vector2.new(localPosition3D.X, localPosition3D.Z)
+			local mass = getCanonicalComponentMass(instance)
+			local localInertia = mass * (instance.Size.X * instance.Size.X + instance.Size.Z * instance.Size.Z) / 12
+			body.MassPoints[#body.MassPoints + 1] = MassPoint.new(
+				mass,
+				localPosition,
+				math.max(localInertia, 0.0001),
+				instance:GetAttribute("ComponentType"),
+				instance:GetAttribute("ComponentId")
+			)
+		end
+	end
+
+	BodyRecomputeService.Recompute(body)
 	return body
 end
 
@@ -136,9 +176,13 @@ local function recomputeShipBody(ship: Model): any?
 	if not body then
 		return nil
 	end
-	return BodyRecomputeService.Recompute(body)
-		and body
-		or body
+
+	ship:SetAttribute("BodyMass", body.Mass)
+	ship:SetAttribute("BodyCenterOfMassX", body.CenterOfMass.X)
+	ship:SetAttribute("BodyCenterOfMassZ", body.CenterOfMass.Y)
+	ship:SetAttribute("BodyMomentOfInertia", body.MomentOfInertia)
+	ship:SetAttribute("BodyBoundingRadius", body.BoundingRadius)
+	return body
 end
 
 function StructuralAuthority.BuildGraph(ship: Model): any

@@ -10,7 +10,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local ComponentAuthority = require(ReplicatedStorage.Shared.Combat:WaitForChild("ComponentAuthority"))
 local TeamIdentity = require(ReplicatedStorage.Shared.Combat:WaitForChild("TeamIdentity"))
-local ShipRegistry = require(ReplicatedStorage.Shared.Ship:WaitForChild("ShipRegistry"))
 local MissionTypes = require(ReplicatedStorage.Shared.Missions:WaitForChild("MissionTypes"))
 
 local MissionConditionService = {}
@@ -51,7 +50,14 @@ local function resolveBodyId(value: any): string?
 		return tostring(value)
 	end
 	if typeof(value) == "Instance" then
-		return value:GetAttribute("BodyId") or value:GetAttribute("ShipId")
+		local bodyId = value:GetAttribute("BodyId")
+		if type(bodyId) == "string" then
+			return bodyId
+		end
+		local shipId = value:GetAttribute("ShipId")
+		if type(shipId) == "string" then
+			return shipId
+		end
 	end
 	return nil
 end
@@ -63,20 +69,13 @@ local function resolveNode(value: any): Instance?
 	return nil
 end
 
-local function readComponentType(part: BasePart): string?
-	local state = ComponentAuthority.Get(part)
-	if state and type(state.ComponentType) == "string" then
-		return state.ComponentType
-	end
-	local attribute = part:GetAttribute("ComponentType")
-	return type(attribute) == "string" and attribute or nil
-end
-
 local function shipHoldsComponent(ship: Model, componentType: string): boolean
-	local components = ComponentAuthority.GetShipComponents(ship)
-	for part, state in pairs(components) do
-		if part.Parent and state and state.ComponentType == componentType then
-			return true
+	for _, instance in ipairs(ship:GetDescendants()) do
+		if instance:IsA("BasePart") then
+			local state = ComponentAuthority.Get(instance)
+			if state and state.TypeName == componentType and not state.Destroyed then
+				return true
+			end
 		end
 	end
 	return false
@@ -112,12 +111,12 @@ local function isConditionTrue(context: MissionTypes.MissionRuntimeContext, cond
 		if type(bodyInfo) ~= "table" or typeof(bodyInfo.Position) ~= "Vector3" then
 			return false
 		end
-		local position = bodyInfo.Position :: Vector3
 		local center = zone.Center
 		local size = zone.Size
 		if typeof(center) ~= "Vector3" or typeof(size) ~= "Vector3" then
 			return false
 		end
+		local position = bodyInfo.Position :: Vector3
 		local half = size * 0.5
 		return math.abs(position.X - center.X) <= half.X
 			and math.abs(position.Y - center.Y) <= half.Y

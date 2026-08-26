@@ -1,6 +1,6 @@
 --[[
 	CombatTypes: Type definitions for the Tactical Combat, Ballistics, and Energy Systems.
-	Sourced from AlterOrb / FunOrb Combat Decompile Mechanics.
+	Roblox runtime contract for the shared combat authorities.
 ]]
 
 export type DamageType = "Kinetic" | "Thermal" | "Energy" | "Explosive" | "EMP"
@@ -14,7 +14,7 @@ export type ProjectileData = {
 	SplashRadius: number?,
 	Speed: number,
 	Range: number,
-	Position: Vector2, -- 2D X-Z plane
+	Position: Vector2,
 	Velocity: Vector2,
 	Origin: Vector2,
 	DistanceTraveled: number,
@@ -44,8 +44,7 @@ export type CapacitorState = {
 	MaxEnergy: number,
 	CurrentEnergy: number,
 	BaseRegen: number,
-	EffectiveRegen: number,
-	Overcharged: boolean,
+	OverchargeCapacity: number,
 }
 
 local CombatTypes = {}

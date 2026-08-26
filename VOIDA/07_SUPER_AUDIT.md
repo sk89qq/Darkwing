@@ -27,25 +27,31 @@ Do not add subsystem-local authoritative copies.
 - Nearest-enemy ship lookup uses `ShipRegistry.GetAll()` instead of a global workspace model scan.
 - Transient point-defence/scrambler scans use `Workspace:GetPartBoundsInRadius`.
 - New weapon-controller scheduling uses `task.spawn`, `task.delay`, and `task.wait`.
+- `ComponentAuthority` now fails closed when a component has no explicit valid `ComponentType`; it does not infer type from `BasePart.Name`.
+- `ShipSocketGraph` no longer invents generic four-way sockets for unknown component types.
+- `ShipSocketGraph` requires explicit component definitions from `Components.Types` + `Components.Connections` before creating topology nodes or sockets.
+- `ShipSocketGraph` records explicit `ParentNodeId`, `ParentSocketId`, and `ConnectedSocketId` metadata during canonical attachment.
+- `ShipSocketGraph` uses explicit relationship metadata first; legacy weld/proximity reconstruction is limited to an import adapter and cannot create unknown components or sockets.
+- Spatial transient targeting remains query-based rather than workspace-descendant scanning.
 - `VOIDA/10_ROBLOX_LUAU_REFERENCE.md` is the standing implementation-style reference, subordinate to raw source semantics.
 
 ## Raw-source corrections from this pass
 1. `wlb.java` directly initializes `hab.g` as 56 component-definition slots.
 2. Only a subset of those slots are literal polygons in the decompiled initializer; many are generated from dependent chassis expressions. Those generated slots must not be replaced by guessed literals.
-3. `wfb.java` derives health through `lw.a(..., u) * z`; the repository's simplified `sqrt(area) * z / 64` helper is not sufficient to call the exact transformation raw-verified.
+3. `wfb.java` derives health through `lw.a(..., u)`; the repository's simplified `sqrt(area) * z / 64` helper is not sufficient to call the exact transformation raw-verified.
 4. `summary.txt` records CFR gaps in major methods. Those methods remain `RAW-GAP` until recovered from bytecode or a better decompilation.
 5. Existing `ForensicDataModel` entries that were synthesized before the raw package was available must be treated as provisional unless they can be traced directly to raw source.
 
 ## Remaining P0
-1. Remove generic four-way socket fallback from `ShipSocketGraph`; unknown component definitions must fail closed.
-2. Make structural replacement atomic: validate candidate hardpoint/connection before mutating the existing structure.
-3. Stop treating weld/proximity reconstruction as authoritative topology when explicit hardpoint metadata exists.
-4. Consolidate blueprint persistence/build systems onto one authoritative implementation without inventing behavior.
-5. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
-6. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
-7. Replace remaining name/type heuristics in shield, power, repair, and combat systems with authoritative component definitions/data.
-8. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
-9. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
+1. Make structural replacement atomic: validate candidate hardpoint/connection before mutating the existing structure.
+2. Stop treating weld/proximity reconstruction as authoritative topology when explicit hardpoint metadata exists; complete caller migration to explicit relationship metadata.
+3. Consolidate blueprint persistence/build systems onto one authoritative implementation without inventing behavior.
+4. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
+5. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
+6. Replace remaining name/type heuristics in shield, power, repair, and combat systems with authoritative component definitions/data.
+7. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
+8. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
+9. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.
 
 ## Source-truth discipline
 The raw package is evidence. The implementation must preserve uncertainty where the decompilation is uncertain.

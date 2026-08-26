@@ -1,0 +1,1 @@
+Original Void Hunters binary verified locally on 2026-08-26. SHA-1 1f10b35f16b5de98ebf67f9b6f3f127aab7b66d3. SHA-256 4bb086ef9b0ec1f6f5362df92d634a2b4d997b4b5037f213fd3d5e5ea219bba4. This binary is the primary forensic source; decompiled notes are derived evidence. Roblox remains the target runtime.

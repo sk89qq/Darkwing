@@ -15,6 +15,7 @@ local ComponentAuthority = require(ReplicatedStorage.Shared.Combat:WaitForChild(
 local BlueprintSerializer = {}
 
 export type BlueprintComponent = {
+	Id: string,
 	ComponentType: string,
 	ParentId: string?,
 	ParentHardpointId: string?,
@@ -29,7 +30,7 @@ export type Blueprint = {
 	Components: { BlueprintComponent },
 }
 
-local VERSION = 1
+local VERSION = 2
 
 local function numberOrNil(value: any): number?
 	if typeof(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
@@ -38,27 +39,18 @@ local function numberOrNil(value: any): number?
 	return value
 end
 
-local function findComponentById(ship: Model, componentId: string): BasePart?
-	for _, instance in ipairs(ship:GetDescendants()) do
-		if instance:IsA("BasePart") and instance:GetAttribute("ComponentId") == componentId then
-			return instance
-		end
-	end
-	return nil
-end
-
 function BlueprintSerializer.Capture(ship: Model): Blueprint?
 	if not ship or not ship:IsA("Model") or not ship.PrimaryPart then
 		return nil
 	end
 
-	local rootId = ship.PrimaryPart:GetAttribute("ComponentId")
-	if typeof(rootId) ~= "string" or rootId == "" then
+	local rootState = ComponentAuthority.Get(ship.PrimaryPart)
+	if not rootState then
 		return nil
 	end
 
-	local rootCFrame = ship.PrimaryPart.CFrame
 	local components: { BlueprintComponent } = {}
+	local rootCFrame = ship.PrimaryPart.CFrame
 
 	for _, instance in ipairs(ship:GetDescendants()) do
 		if not instance:IsA("BasePart") or instance:GetAttribute("IsDebris") then
@@ -69,14 +61,14 @@ function BlueprintSerializer.Capture(ship: Model): Blueprint?
 		if not state then
 			continue
 		end
-
-		if not Components.Types[state.TypeName] then
+		if not Components.Types[state.TypeName] or not Components.Connections[state.TypeName] then
 			continue
 		end
 
 		local localCFrame = rootCFrame:ToObjectSpace(instance.CFrame)
 		local _, yaw, _ = localCFrame:ToEulerAnglesYXZ()
 		components[#components + 1] = {
+			Id = state.Id,
 			ComponentType = state.TypeName,
 			ParentId = state.ParentId,
 			ParentHardpointId = instance:GetAttribute("ParentSocketId"),
@@ -91,7 +83,7 @@ function BlueprintSerializer.Capture(ship: Model): Blueprint?
 
 	return {
 		Version = VERSION,
-		RootComponentId = rootId,
+		RootComponentId = rootState.Id,
 		Components = components,
 	}
 end
@@ -115,31 +107,68 @@ function BlueprintSerializer.Decode(encoded: string): Blueprint?
 	end
 
 	local sanitized: { BlueprintComponent } = {}
+	local ids: { [string]: boolean } = {}
 	for _, raw in ipairs(value.Components) do
-		if type(raw) ~= "table" or typeof(raw.ComponentType) ~= "string" then
+		if type(raw) ~= "table" then
+			return nil
+		end
+		if typeof(raw.Id) ~= "string" or raw.Id == "" or ids[raw.Id] then
+			return nil
+		end
+		if typeof(raw.ComponentType) ~= "string" then
 			return nil
 		end
 		if not Components.Types[raw.ComponentType] or not Components.Connections[raw.ComponentType] then
 			return nil
 		end
+		if raw.ParentId ~= nil and typeof(raw.ParentId) ~= "string" then
+			return nil
+		end
+		if raw.ParentHardpointId ~= nil and typeof(raw.ParentHardpointId) ~= "string" then
+			return nil
+		end
+		if raw.ChildHardpointId ~= nil and typeof(raw.ChildHardpointId) ~= "string" then
+			return nil
+		end
 		if type(raw.Position) ~= "table" then
 			return nil
 		end
+
 		local x = numberOrNil(raw.Position.x)
 		local y = numberOrNil(raw.Position.y)
 		local angle = numberOrNil(raw.Angle)
-		if not x or not y or angle == nil then
+		if x == nil or y == nil or angle == nil then
 			return nil
 		end
 
+		ids[raw.Id] = true
 		sanitized[#sanitized + 1] = {
+			Id = raw.Id,
 			ComponentType = raw.ComponentType,
-			ParentId = typeof(raw.ParentId) == "string" and raw.ParentId or nil,
-			ParentHardpointId = typeof(raw.ParentHardpointId) == "string" and raw.ParentHardpointId or nil,
-			ChildHardpointId = typeof(raw.ChildHardpointId) == "string" and raw.ChildHardpointId or nil,
+			ParentId = raw.ParentId,
+			ParentHardpointId = raw.ParentHardpointId,
+			ChildHardpointId = raw.ChildHardpointId,
 			Position = { x = x, y = y },
 			Angle = angle,
 		}
+	end
+
+	if not ids[value.RootComponentId] then
+		return nil
+	end
+
+	local rootCount = 0
+	for _, component in ipairs(sanitized) do
+		if component.ParentId and not ids[component.ParentId] then
+			return nil
+		end
+		if component.Id == value.RootComponentId then
+			rootCount += 1
+		end
+	end
+
+	if rootCount ~= 1 then
+		return nil
 	end
 
 	return {
@@ -150,7 +179,12 @@ function BlueprintSerializer.Decode(encoded: string): Blueprint?
 end
 
 function BlueprintSerializer.FindRoot(ship: Model, blueprint: Blueprint): BasePart?
-	return findComponentById(ship, blueprint.RootComponentId)
+	for _, instance in ipairs(ship:GetDescendants()) do
+		if instance:IsA("BasePart") and instance:GetAttribute("ComponentId") == blueprint.RootComponentId then
+			return instance
+		end
+	end
+	return nil
 end
 
 return BlueprintSerializer

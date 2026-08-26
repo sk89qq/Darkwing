@@ -1,0 +1,57 @@
+native_slot,source_line,definition_kind,initializer_reference,behavior
+0,104,DIRECT_OR_OBJECT_REFERENCE,wfb2,none
+1,106,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{40,0,0,40,-40,0,0,-40},0,0)",none
+2,113,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{10,0,0,10,-10,0,0,-10},0,0)",none
+3,369,DIRECT_OR_OBJECT_REFERENCE,object,none
+4,383,DIRECT_OR_OBJECT_REFERENCE,object,none
+5,393,DIRECT_OR_OBJECT_REFERENCE,object,none
+6,405,DIRECT_OR_OBJECT_REFERENCE,object,none
+7,416,DIRECT_OR_OBJECT_REFERENCE,object,none
+8,427,DIRECT_OR_OBJECT_REFERENCE,object,none
+9,440,DIRECT_OR_OBJECT_REFERENCE,object,none
+10,453,DIRECT_OR_OBJECT_REFERENCE,object,none
+11,462,DIRECT_OR_OBJECT_REFERENCE,object,none
+12,122,DIRECT_OR_OBJECT_REFERENCE,wfb2,none
+13,127,DIRECT_OR_OBJECT_REFERENCE,wfb2,none
+14,135,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{2,-1,2,1,-2,0},-2,0)",weapon=11
+15,139,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{5,-1,5,1,-5,3,-5,-3},-5,0)",weapon=0
+16,143,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{10,-3,10,3,-10,1,-10,-1},-10,0)",weapon=3
+17,152,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{10,-5,10,5,-10,3,-10,-3},-10,0)",weapon=1
+18,341,DIRECT_OR_OBJECT_REFERENCE,object,weapon=2
+19,155,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{40,5,-40,5,-40,-5,40,-5},-35,0)",generic=kma
+20,158,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{20,5,-20,5,-20,-5,20,-5},-15,0)",generic=kma
+21,491,GENERATED_EXPRESSION,jba.a(...),none
+22,481,DIRECT_OR_OBJECT_REFERENCE,new wfb((int[])object,0,0),none
+23,166,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{3,-3,3,3,-3,1,-3,-1},-3,0)",weapon=4
+24,170,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{4,-1,4,1,-4,1,-4,-1},-4,0)",weapon=6
+25,174,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{8,-1,8,1,-8,2,-8,-2},-8,0)",weapon=7
+26,181,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{6,-4,6,4,-6,3,-6,-3},-6,0)",grapple
+27,147,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{8,-3,8,3,-8,1,-8,-1},-8,0)",weapon=8
+28,186,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{3,-3,3,3,-3,3,-3,-3},0,0)",none
+29,161,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{5,-5,5,5,-5,5,-5,-5},-5,0)",none
+30,222,GENERATED_EXPRESSION,"new wfb(new int[]{n6,0,-n6,n5,-n6,-n5},-n6,0)",none
+31,235,DIRECT_OR_OBJECT_REFERENCE,wfb3,none
+32,243,DIRECT_OR_OBJECT_REFERENCE,object,none
+33,267,DIRECT_OR_OBJECT_REFERENCE,object,none
+34,277,DIRECT_OR_OBJECT_REFERENCE,object2,none
+35,286,DIRECT_OR_OBJECT_REFERENCE,object,none
+36,297,DIRECT_OR_OBJECT_REFERENCE,object,none
+37,258,DIRECT_OR_OBJECT_REFERENCE,object,none
+38,317,DIRECT_OR_OBJECT_REFERENCE,object,none
+39,325,DIRECT_OR_OBJECT_REFERENCE,object,none
+40,251,DIRECT_OR_OBJECT_REFERENCE,object,none
+41,333,DIRECT_OR_OBJECT_REFERENCE,object,none
+42,188,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{5,-8,5,8,-5,5,-5,-5},-5,0)",none
+43,193,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{3,-1,3,1,-3,1,-3,-1},-3,0)",weapon=9
+44,197,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{3,-3,3,3,-3,5,-3,-5},-3,0)",weapon=10
+45,357,DIRECT_OR_OBJECT_REFERENCE,object,none
+46,134,DIRECT_OR_OBJECT_REFERENCE,wfb2,none
+47,202,DIRECT_OR_OBJECT_REFERENCE,"new wfb(new int[]{20,-18,20,18,-11,18,-11,5,-20,5,-20,-5,-11,-5,-11,-18},-20,0)",none
+48,492,GENERATED_EXPRESSION,jba.a(...),none
+49,493,GENERATED_EXPRESSION,jba.a(...),none
+50,494,GENERATED_EXPRESSION,jba.a(...),none
+51,307,DIRECT_OR_OBJECT_REFERENCE,object,none
+52,495,GENERATED_EXPRESSION,jba.a(...),none
+53,496,GENERATED_EXPRESSION,jba.a(...),none
+54,497,GENERATED_EXPRESSION,jba.a(...),none
+55,498,GENERATED_EXPRESSION,jba.a(...),none

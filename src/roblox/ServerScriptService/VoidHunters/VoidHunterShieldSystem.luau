@@ -5,11 +5,10 @@
 	- Component identity comes from explicit ComponentType metadata.
 	- Component configuration comes from VoidHunterComponents.Types.
 	- No gameplay state is inferred from Instance.Name.
-	- Shield runtime state is local to each registered shield assembly.
+	- Shield runtime state is local to each registered ship's shield assembly.
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"))
@@ -41,22 +40,21 @@ export type ShieldState = {
 
 local activeShields: { [BasePart]: ShieldState } = setmetatable({}, { __mode = "k" })
 
-local function isShieldDefinition(typeName: string?): boolean
-	return typeof(typeName) == "string" and SHIELD_COMPONENT_TYPES[typeName] == true
-end
-
 local function getComponentDefinition(part: Instance): (string?, any?)
 	if not part:IsA("BasePart") then
 		return nil, nil
 	end
+
 	local typeName = part:GetAttribute("ComponentType")
-	if not isShieldDefinition(typeName) then
+	if typeof(typeName) ~= "string" or not SHIELD_COMPONENT_TYPES[typeName] then
 		return nil, nil
 	end
+
 	local definition = Components.Types[typeName]
 	if type(definition) ~= "table" then
 		return nil, nil
 	end
+
 	return typeName, definition
 end
 
@@ -73,55 +71,46 @@ local function getShieldComponents(ship: Model): { [BasePart]: any }
 	return result
 end
 
-local function calculateShieldConfiguration(ship: Model): (number, number, number, number)
+local function calculateShieldConfiguration(ship: Model): (number, number, number, number, number)
+	local shieldCount = 0
 	local totalOutput = 0
 	local totalRegen = 0
-	local totalRadius = 0
-	local shieldCount = 0
-	local minActivation = 0
 	local totalEnergy = 0
+	local maxRadius = 0
+	local minActivation = 0
 
 	for _, definition in pairs(getShieldComponents(ship)) do
 		shieldCount += 1
 		totalOutput += typeof(definition.ShieldOutput) == "number" and definition.ShieldOutput or 0
 		totalRegen += typeof(definition.ShieldRegen) == "number" and definition.ShieldRegen or 0
-		local radius = typeof(definition.ShieldRadius) == "number" and definition.ShieldRadius or 0
-		totalRadius = math.max(totalRadius, radius)
-		minActivation = math.max(minActivation, typeof(definition.MinEnergyToActivate) == "number" and definition.MinEnergyToActivate or 0)
 		totalEnergy += typeof(definition.MaxShieldEnergy) == "number" and definition.MaxShieldEnergy or 0
+		maxRadius = math.max(maxRadius, typeof(definition.ShieldRadius) == "number" and definition.ShieldRadius or 0)
+		minActivation = math.max(minActivation, typeof(definition.MinEnergyToActivate) == "number" and definition.MinEnergyToActivate or 0)
 	end
 
 	if shieldCount == 0 then
-		return 0, 0, DEFAULT_RECHARGE_DELAY, 0
+		return 0, 0, 0, 0, 0
 	end
 
 	local maxEnergy = totalEnergy > 0 and totalEnergy or DEFAULT_MAX_ENERGY * shieldCount
 	local rechargeRate = totalRegen > 0 and totalRegen or math.max(1, totalOutput * 0.1)
-	local radius = totalRadius > 0 and totalRadius or 0
-	return maxEnergy, rechargeRate, math.max(minActivation, maxEnergy * 0.5), radius
+	local activationThreshold = minActivation > 0 and minActivation or maxEnergy * 0.5
+	return maxEnergy, rechargeRate, activationThreshold, maxRadius, shieldCount
 end
 
 local function findBubble(shieldPart: BasePart): BasePart?
-	local direct = shieldPart:FindFirstChild("ShieldBubble")
-	if direct and direct:IsA("BasePart") then
-		return direct
-	end
-	return nil
-end
-
-local function findShieldPart(ship: Model): BasePart?
-	for part, _ in pairs(getShieldComponents(ship)) do
-		return part
-	end
-	return nil
+	local bubble = shieldPart:FindFirstChild("ShieldBubble")
+	return bubble and bubble:IsA("BasePart") and bubble or nil
 end
 
 local function getBubbleForShip(ship: Model): BasePart?
-	local shieldPart = findShieldPart(ship)
-	if not shieldPart then
-		return nil
+	for shieldPart in pairs(getShieldComponents(ship)) do
+		local bubble = findBubble(shieldPart)
+		if bubble then
+			return bubble
+		end
 	end
-	return findBubble(shieldPart)
+	return nil
 end
 
 local function updateShieldVisual(state: ShieldState)
@@ -201,8 +190,7 @@ local function damageShield(bubble: BasePart, amount: number): boolean
 		return false
 	end
 
-	local effectiveCost = amount * state.damageToEnergy
-	state.energy = math.max(0, state.energy - effectiveCost)
+	state.energy = math.max(0, state.energy - amount * state.damageToEnergy)
 	state.lastHitTime = os.clock()
 
 	if state.energy <= 0 then
@@ -219,14 +207,23 @@ local function initializeShipShield(ship: Model)
 		return
 	end
 
-	local shieldPart = findShieldPart(ship)
-	local bubble = shieldPart and findBubble(shieldPart)
-	if not shieldPart or not bubble then
+	local shieldPart = nil
+	local shieldDefinitions = getShieldComponents(ship)
+	for part in pairs(shieldDefinitions) do
+		shieldPart = part
+		break
+	end
+	if not shieldPart then
 		return
 	end
 
-	local maxEnergy, rechargeRate, minActivation, radius = calculateShieldConfiguration(ship)
-	if maxEnergy <= 0 then
+	local bubble = findBubble(shieldPart)
+	if not bubble then
+		return
+	end
+
+	local maxEnergy, rechargeRate, minActivation, radius, shieldCount = calculateShieldConfiguration(ship)
+	if shieldCount <= 0 or maxEnergy <= 0 then
 		return
 	end
 
@@ -235,7 +232,7 @@ local function initializeShipShield(ship: Model)
 		return
 	end
 
-	local primaryDefinition = getComponentDefinition(shieldPart)
+	local _, primaryDefinition = getComponentDefinition(shieldPart)
 	local damageToEnergy = 0.5
 	if primaryDefinition and typeof(primaryDefinition.DamageToEnergy) == "number" then
 		damageToEnergy = primaryDefinition.DamageToEnergy
@@ -258,18 +255,29 @@ local function initializeShipShield(ship: Model)
 	updateShieldVisual(state)
 end
 
-local function cleanupDestroyedShields()
-	for bubble, state in pairs(activeShields) do
-		if not bubble.Parent or not state.ship.Parent then
-			activeShields[bubble] = nil
-		end
+local function scanRegisteredShips()
+	for _, ship in pairs(ShipRegistry.GetAll()) do
+		initializeShipShield(ship)
 	end
 end
 
+scanRegisteredShips()
+
+task.spawn(function()
+	while true do
+		scanRegisteredShips()
+		task.wait(1)
+	end
+end)
+
 RunService.Heartbeat:Connect(function(deltaTime: number)
-	cleanupDestroyedShields()
 	local now = os.clock()
 	for bubble, state in pairs(activeShields) do
+		if not bubble.Parent or not state.ship.Parent then
+			activeShields[bubble] = nil
+			continue
+		end
+
 		if state.active then
 			updateShieldVisual(state)
 		elseif now - state.lastHitTime >= DEFAULT_RECHARGE_DELAY then
@@ -281,18 +289,6 @@ RunService.Heartbeat:Connect(function(deltaTime: number)
 			end
 		end
 	end
-end)
-
-local function scanRegisteredShips()
-	for _, ship in pairs(ShipRegistry.GetAll()) do
-		initializeShipShield(ship)
-	end
-end
-
-scanRegisteredShips()
-
-RunService.Heartbeat:Connect(function()
-	scanRegisteredShips()
 end)
 
 local comms = ReplicatedStorage:FindFirstChild("Communication")
@@ -313,6 +309,7 @@ end
 	if typeof(action) ~= "string" or not shieldModel or not shieldModel:IsA("Model") then
 		return
 	end
+
 	local ship = ShipRegistry.GetShip(player)
 	if ship ~= shieldModel then
 		return

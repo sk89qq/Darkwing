@@ -3,93 +3,86 @@
 	Source-faithful mapping of the recovered Void Hunters debris-launch operators.
 
 	RAW-DIRECT:
-	- ml.DA derives a debris spawn offset from component/body coordinates.
-	- ar.a(...) resolves the offset length in native fixed-point space.
-	- ecb.a(...) resolves the fast integer vector magnitude used for launch force.
+	- ml.DA derives a component-relative debris launch offset.
+	- ar.a(...) resolves the native fixed-point offset magnitude.
+	- ecb.a(...) resolves the native integer launch magnitude helper.
 	- hob.a(random, 200, 118) supplies an unbiased integer in [0, 199].
 	- rrb.a(22433, angle) wraps the launch angle into the native signed turn domain.
-	- anb.a(point, force) applies the launch force through the native body
-	  accumulator path; ge.c = 4 and tua.a = 4.
-	
+	- anb.e(false) returns the body mass field `s`.
+	- ml.DA therefore computes launch force as `n2 * debrisMass / offsetLength`.
+	- The launch is applied through the native body force operator `anb.a(...)`.
+
 	ROBLOX-MAPPING:
 	- Vector2 uses X/Z logical space.
-	- Native turn units are 8192 units per full revolution for rrb.a(...).
-	- The native force magnitude is preserved as a logical scalar:
-	    force = launchScale * debrisProperty / max(offsetLength, 1)
-	- No Newton/stud conversion is invented here. The projection layer decides
-	  how the recovered logical force is applied to the Roblox assembly.
+	- Native turn units use 8192 units per full revolution.
+	- Logical launch computation is kept separate from Roblox assembly projection.
+	- No arbitrary Newton/stud conversion is introduced.
 ]]
 
 local NativeDebrisPhysics = {}
 
 local FULL_TURN_UNITS = 8192
 local HALF_TURN_UNITS = 4096
-local QUARTER_TURN_UNITS = 2048
 local RANDOM_RANGE = 200
+local RANDOM_OFFSET = 100
 
 local function wrapNativeAngle(angleUnits: number): number
-	return -HALF_TURN_UNITS + bit32.band(QUARTER_TURN_UNITS + angleUnits, 8191)
-end
-
-local function integerVectorMagnitude(x: number, z: number): number
-	return math.floor(math.sqrt((x * x) + (z * z)))
-end
-
-local function unbiasedRandom200(rng: Random): number
-	return rng:NextInteger(0, RANDOM_RANGE - 1)
-end
-
-local function radiansToNativeTurns(radians: number): number
-	return math.floor((radians / (math.pi * 2)) * FULL_TURN_UNITS)
+	return -HALF_TURN_UNITS + bit32.band(4096 + angleUnits, 8191)
 end
 
 local function nativeAngleToRadians(angleUnits: number): number
 	return (angleUnits / FULL_TURN_UNITS) * (math.pi * 2)
 end
 
-export type LaunchInput = {
-	Offset: Vector2,
-	LaunchScale: number,
-	DebrisProperty: number,
-}
+local function unbiasedRandom200(rng: Random): number
+	return rng:NextInteger(0, RANDOM_RANGE - 1)
+end
+
+local function nativeVectorMagnitude(x: number, z: number): number
+	return math.sqrt((x * x) + (z * z))
+end
 
 export type LaunchResult = {
 	Offset: Vector2,
 	OffsetLength: number,
+	DebrisMass: number,
+	LaunchScale: number,
+	ForceMagnitude: number,
 	AngleUnits: number,
 	AngleRadians: number,
-	ForceMagnitude: number,
 	ForceDirection: Vector2,
 }
 
-function NativeDebrisPhysics.WrapAngleUnits(angleUnits: number): number
-	return wrapNativeAngle(angleUnits)
-end
-
-function NativeDebrisPhysics.ComputeLaunch(input: LaunchInput, rng: Random?): LaunchResult
-	assert(typeof(input.Offset) == "Vector2", "NativeDebrisPhysics.ComputeLaunch expects a Vector2 offset")
-	assert(type(input.LaunchScale) == "number", "NativeDebrisPhysics.ComputeLaunch expects numeric LaunchScale")
-	assert(type(input.DebrisProperty) == "number", "NativeDebrisPhysics.ComputeLaunch expects numeric DebrisProperty")
+function NativeDebrisPhysics.ComputeLaunch(
+	offset: Vector2,
+	launchScale: number,
+	debrisMass: number,
+	rng: Random?
+): LaunchResult
+	assert(typeof(offset) == "Vector2", "NativeDebrisPhysics.ComputeLaunch expects a Vector2 offset")
+	assert(type(launchScale) == "number", "NativeDebrisPhysics.ComputeLaunch expects numeric launchScale")
+	assert(type(debrisMass) == "number", "NativeDebrisPhysics.ComputeLaunch expects numeric debrisMass")
 
 	local random = rng or Random.new()
-	local nativeOffsetX = input.Offset.X
-	local nativeOffsetZ = input.Offset.Y
-	local offsetLength = math.max(integerVectorMagnitude(nativeOffsetX, nativeOffsetZ), 1)
-	local offsetAngleRadians = math.atan2(nativeOffsetZ, nativeOffsetX)
-	local baseAngleUnits = radiansToNativeTurns(offsetAngleRadians)
-	local randomizedAngleUnits = baseAngleUnits - 100 + unbiasedRandom200(random)
-	local wrappedAngleUnits = wrapNativeAngle(randomizedAngleUnits)
-	local angleRadians = nativeAngleToRadians(wrappedAngleUnits)
+	local offsetLength = math.max(nativeVectorMagnitude(offset.X, offset.Y), 1)
 
-	local forceMagnitude = input.LaunchScale * input.DebrisProperty / offsetLength
+	local offsetAngleRadians = math.atan2(offset.Y, offset.X)
+	local offsetAngleUnits = math.floor((offsetAngleRadians / (math.pi * 2)) * FULL_TURN_UNITS)
+	local randomizedAngleUnits = offsetAngleUnits - RANDOM_OFFSET + unbiasedRandom200(random)
+	local angleUnits = wrapNativeAngle(randomizedAngleUnits)
+	local angleRadians = nativeAngleToRadians(angleUnits)
+
+	local forceMagnitude = launchScale * debrisMass / offsetLength
 	local forceDirection = Vector2.new(math.cos(angleRadians), math.sin(angleRadians))
 
 	return {
-		Offset = input.Offset,
+		Offset = offset,
 		OffsetLength = offsetLength,
-		AngleUnits = wrappedAngleUnits,
-		AngleRadians = angleRadians,
+		DebrisMass = debrisMass,
+		LaunchScale = launchScale,
 		ForceMagnitude = forceMagnitude,
+		AngleUnits = angleUnits,
+		AngleRadians = angleRadians,
 		ForceDirection = forceDirection,
 	}
 end

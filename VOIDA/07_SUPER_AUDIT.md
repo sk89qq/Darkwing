@@ -12,6 +12,7 @@ No synthesized blueprint outranks the raw source. The removed `05_FORENSIC_PORT_
 - `ShipSocketGraph` = hardpoint/socket topology solver.
 - `RigidBody2D` / Roblox Assembly = physical projection subject to recovered source behavior.
 - `TeamIdentity` = Yellow/Blue team vocabulary.
+- `VoidHunterBuilderServer` = canonical blueprint persistence + blueprint construction.
 
 Do not add subsystem-local authoritative copies.
 
@@ -33,6 +34,9 @@ Do not add subsystem-local authoritative copies.
 - `ShipSocketGraph` records explicit `ParentNodeId`, `ParentSocketId`, and `ConnectedSocketId` metadata during canonical attachment.
 - `ShipSocketGraph` uses explicit relationship metadata first; legacy weld/proximity reconstruction is limited to an import adapter and cannot create unknown components or sockets.
 - `StructuralAuthority.ReplaceComponent` now validates the replacement definition and preserved parent hardpoint before detaching the existing component, then attaches to that exact socket and rolls back on failure.
+- Blueprint persistence and construction are consolidated into `VoidHunterBuilderServer`; the old blueprint system is now a compatibility facade with no independent datastore/schema.
+- Builder placement routes through `StructuralAuthority`; the old direct blueprint mutation/adjacency authority was removed.
+- Sync blueprint persistence is superseded by `VoidHunterBuilderServer`; ship lifecycle lookup routes through `ShipRegistry`.
 - Spatial transient targeting remains query-based rather than workspace-descendant scanning.
 - `VOIDA/10_ROBLOX_LUAU_REFERENCE.md` is the standing implementation-style reference, subordinate to raw source semantics.
 
@@ -44,14 +48,13 @@ Do not add subsystem-local authoritative copies.
 5. Existing `ForensicDataModel` entries that were synthesized before the raw package was available must be treated as provisional unless they can be traced directly to raw source.
 
 ## Remaining P0
-1. Stop treating weld/proximity reconstruction as authoritative topology when explicit hardpoint metadata exists; complete caller migration to explicit relationship metadata.
-2. Consolidate blueprint persistence/build systems onto one authoritative implementation without inventing behavior.
-3. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
-4. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
-5. Replace remaining name/type heuristics in shield, power, repair, and combat systems with authoritative component definitions/data.
-6. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
-7. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
-8. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.
+1. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
+2. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
+3. Replace remaining name/type heuristics in shield, power, repair, and combat systems with authoritative component definitions/data.
+4. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
+5. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
+6. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.
+7. Prove all externally referenced compatibility facades have no remaining live callers, then delete `VoidHunterBlueprintSystem` and `VoidHunterSyncManager` rather than retaining unnecessary compatibility surface.
 
 ## Source-truth discipline
 The raw package is evidence. The implementation must preserve uncertainty where the decompilation is uncertain.

@@ -1,29 +1,70 @@
 --[[
 	BallisticsEngine: 2D Projectile Physics & Kinetic Impulse Subsystem.
-	Sourced from AlterOrb / FunOrb Ballistics Decompile Mechanics.
-	
-	Features:
+	Roblox-first runtime implementation using the project's canonical 2D
+	physics representation and Roblox visual projection.
+
+	Behavioral goals:
 	  - True 2D planar projectile integration with ship velocity inheritance
-	  - Swept line-segment collision checks against RigidBody2D hulls
-	  - Momentum-conserving impulse delivery to hit ships
-	  - Homing missile guidance & angular turn rates
-	  - Splash/Tick area-of-effect damage propagation
+	  - Swept segment collision checks to prevent tunneling
+	  - Momentum-style impulse delivery to hit bodies when the physics body
+	    exposes the authoritative impulse API
+	  - Homing missile guidance with bounded angular turn rate
+	  - Deterministic projectile lifetime/range cleanup
 ]]
 
-local Debris = game:GetService("Debris")
 local PhysicsConfig = require(game.ReplicatedStorage.Shared.Physics.PhysicsConfig)
 local CombatTypes = require(game.ReplicatedStorage.Shared.Combat.CombatTypes)
 
 local BallisticsEngine = {}
 BallisticsEngine.__index = BallisticsEngine
 
+local function distancePointToSegment(point: Vector2, startPoint: Vector2, endPoint: Vector2): number
+	local segment = endPoint - startPoint
+	local lengthSq = segment.MagnitudeSq
+	if lengthSq <= 0.000001 then
+		return (point - startPoint).Magnitude
+	end
+
+	local t = math.clamp((point - startPoint):Dot(segment) / lengthSq, 0, 1)
+	local closest = startPoint + segment * t
+	return (point - closest).Magnitude
+end
+
+local function findSegmentBodyHit(startPoint: Vector2, endPoint: Vector2, bodies: { any }, shooterId: string): (any?, Vector2?)
+	local bestBody: any = nil
+	local bestDistance = math.huge
+	local segmentLength = (endPoint - startPoint).Magnitude
+
+	for _, body in ipairs(bodies) do
+		if body.Id ~= shooterId and body.IsActive then
+			local radius = body.BoundingRadius or 6.0
+			local distanceToSegment = distancePointToSegment(body.Position, startPoint, endPoint)
+			if distanceToSegment <= radius then
+				local travelDistance = (body.Position - startPoint).Magnitude
+				if travelDistance <= segmentLength + radius and travelDistance < bestDistance then
+					bestDistance = travelDistance
+					local direction = endPoint - startPoint
+					local directionUnit = direction.Magnitude > 0 and direction.Unit or Vector2.yAxis
+					local hitPoint = body.Position - directionUnit * math.min(radius, travelDistance)
+					bestBody = body
+					bestDistance = travelDistance
+					if hitPoint ~= hitPoint then
+						hitPoint = startPoint
+					end
+					return bestBody, hitPoint
+				end
+			end
+		end
+	end
+
+	return bestBody, nil
+end
+
 function BallisticsEngine.new(physicsWorld: any?)
 	local self = setmetatable({}, BallisticsEngine)
-
 	self.PhysicsWorld = physicsWorld
 	self.Projectiles = {} :: { [string]: CombatTypes.ProjectileData }
 	self.NextId = 1
-
 	return self
 end
 
@@ -49,7 +90,7 @@ function BallisticsEngine:SpawnProjectile(params: {
 	local id = "proj_" .. tostring(self.NextId)
 	self.NextId += 1
 
-	local dir = (params.Direction2D.Magnitude > 0) and params.Direction2D.Unit or Vector2.new(0, 1)
+	local dir = (params.Direction2D.Magnitude > 0) and params.Direction2D.Unit or Vector2.yAxis
 	local inherited = params.InheritedVelocity or Vector2.zero
 	local muzzleVel = dir * params.Speed
 	local finalVel = inherited + muzzleVel
@@ -74,7 +115,7 @@ function BallisticsEngine:SpawnProjectile(params: {
 		Lifetime = (params.Speed > 0) and (params.Range / params.Speed) or 2.0,
 		VisualPart = params.VisualModel,
 		HomingTarget = params.HomingTarget,
-		HomingTurnRate = 4.5, -- radians/sec
+		HomingTurnRate = 4.5,
 		ImpulseMagnitude = params.ImpulseMagnitude or (params.Damage * 12.0),
 	}
 
@@ -82,71 +123,71 @@ function BallisticsEngine:SpawnProjectile(params: {
 	return proj
 end
 
--- Steps all active projectiles on the 2D plane
 function BallisticsEngine:Step(dt: number, onHitCallback: ((CombatTypes.ProjectileData, any, Vector2) -> ())?)
+	if typeof(dt) ~= "number" or dt <= 0 or dt ~= dt or dt == math.huge then
+		return
+	end
+
 	for id, proj in pairs(self.Projectiles) do
-		-- 1. Homing Guidance logic
-		if proj.HomingTarget and proj.HomingTarget.Position then
-			local targetPos2D = Vector2.new(proj.HomingTarget.Position.X, proj.HomingTarget.Position.Z)
-			local desiredDir = (targetPos2D - proj.Position).Unit
-			local currentDir = proj.Velocity.Unit
-			
-			local currentAngle = math.atan2(currentDir.Y, currentDir.X)
-			local targetAngle = math.atan2(desiredDir.Y, desiredDir.X)
-			local diff = math.atan2(math.sin(targetAngle - currentAngle), math.cos(targetAngle - currentAngle))
-			
-			local maxTurn = (proj.HomingTurnRate or 4.0) * dt
-			local actualTurn = math.clamp(diff, -maxTurn, maxTurn)
-			local newAngle = currentAngle + actualTurn
-			
-			local newDir = Vector2.new(math.cos(newAngle), math.sin(newAngle))
-			proj.Velocity = newDir * proj.Speed
+		if not self.Projectiles[id] then
+			continue
 		end
 
-		-- 2. Kinematics integration
+		if proj.HomingTarget and proj.HomingTarget.Position then
+			local targetPosition = proj.HomingTarget.Position
+			local offset = Vector2.new(targetPosition.X, targetPosition.Z) - proj.Position
+			if offset.Magnitude > 0.001 and proj.Velocity.Magnitude > 0.001 then
+				local desiredDir = offset.Unit
+				local currentDir = proj.Velocity.Unit
+				local currentAngle = math.atan2(currentDir.Y, currentDir.X)
+				local targetAngle = math.atan2(desiredDir.Y, desiredDir.X)
+				local diff = math.atan2(math.sin(targetAngle - currentAngle), math.cos(targetAngle - currentAngle))
+				local maxTurn = (proj.HomingTurnRate or 4.0) * dt
+				local actualTurn = math.clamp(diff, -maxTurn, maxTurn)
+				local newAngle = currentAngle + actualTurn
+				proj.Velocity = Vector2.new(math.cos(newAngle), math.sin(newAngle)) * proj.Speed
+			end
+		end
+
+		local startPos = proj.Position
 		local stepMovement = proj.Velocity * dt
+		local nextPos = startPos + stepMovement
 		local stepDist = stepMovement.Magnitude
-		local nextPos = proj.Position + stepMovement
 		proj.DistanceTraveled += stepDist
 
-		-- 3. Collision query against PhysicsWorld or 2D Spatial bodies
 		local hitOccurred = false
+		local hitBody: any = nil
+		local hitPosition = nextPos
 		if self.PhysicsWorld and self.PhysicsWorld.BodyList then
-			for _, body in ipairs(self.PhysicsWorld.BodyList) do
-				if body.Id ~= proj.ShooterId and body.IsActive then
-					local toBody = body.Position - nextPos
-					if toBody.Magnitude <= (body.BoundingRadius or 6.0) then
-						hitOccurred = true
-						-- Deliver physical impulse onto hit body
-						if body.AddImpulse then
-							local impulseDir = proj.Velocity.Unit
-							body:AddImpulse(impulseDir * proj.ImpulseMagnitude, nextPos)
-						end
-
-						if onHitCallback then
-							onHitCallback(proj, body, nextPos)
-						end
-						break
-					end
+			hitBody, hitPosition = findSegmentBodyHit(startPos, nextPos, self.PhysicsWorld.BodyList, proj.ShooterId)
+			if hitBody then
+				hitOccurred = true
+				if hitBody.ApplyImpulseAtWorldPoint then
+					hitBody:ApplyImpulseAtWorldPoint(proj.Velocity.Unit * proj.ImpulseMagnitude, hitPosition)
+				end
+				if onHitCallback then
+					onHitCallback(proj, hitBody, hitPosition)
 				end
 			end
 		end
 
-		-- 4. Sync Visual Part to 3D Roblox Workspace
+		proj.Position = hitOccurred and hitPosition or nextPos
+
 		if proj.VisualPart and proj.VisualPart.Parent then
-			proj.VisualPart.Position = Vector3.new(nextPos.X, PhysicsConfig.FIXED_Y_ELEVATION, nextPos.Y)
-			local yaw = -math.atan2(proj.Velocity.Y, proj.Velocity.X) + math.pi/2
-			proj.VisualPart.CFrame = CFrame.new(proj.VisualPart.Position) * CFrame.Angles(0, yaw, 0)
+			proj.VisualPart.Position = Vector3.new(proj.Position.X, PhysicsConfig.FIXED_Y_ELEVATION, proj.Position.Y)
+			if proj.Velocity.Magnitude > 0.001 then
+				local yaw = -math.atan2(proj.Velocity.Y, proj.Velocity.X) + math.pi / 2
+				proj.VisualPart.CFrame = CFrame.new(proj.VisualPart.Position) * CFrame.Angles(0, yaw, 0)
+			end
 		end
 
-		proj.Position = nextPos
-
-		-- 5. Expiration / Cleanup
-		if hitOccurred or proj.DistanceTraveled >= proj.Range then
+		if hitOccurred or proj.DistanceTraveled >= proj.Range or proj.Lifetime <= 0 then
 			if proj.VisualPart and proj.VisualPart.Parent then
 				proj.VisualPart:Destroy()
 			end
 			self.Projectiles[id] = nil
+		else
+			proj.Lifetime = math.max(0, proj.Lifetime - dt)
 		end
 	end
 end

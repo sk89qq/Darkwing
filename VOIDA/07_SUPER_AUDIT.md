@@ -47,6 +47,8 @@ Do not add subsystem-local authoritative copies.
 - PvP non-core destruction now routes through `StructuralAuthority.DetachComponent`.
 - PvP core destruction unregisters the ship from `ShipRegistry` before physical destruction.
 - Spatial transient targeting remains query-based rather than workspace-descendant scanning.
+- `RigidBody2D:GetWorldPointVelocity` now provides the rigid-body-consistent kinematic velocity at a component's local position.
+- `RigidBody2D:CreateDetachedBody` now seeds a newly independent body from position, linear point velocity, rotation, angular velocity, restitution, and fixed-Y without inventing a detachment impulse.
 - `VOIDA/10_ROBLOX_LUAU_REFERENCE.md` is the standing implementation-style reference, subordinate to raw source semantics.
 
 ## Raw-source corrections from this pass
@@ -57,7 +59,7 @@ Do not add subsystem-local authoritative copies.
 5. Existing `ForensicDataModel` entries that were synthesized before the raw package was available must be treated as provisional unless they can be traced directly to raw source.
 
 ## Remaining P0
-1. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
+1. Recover exact source detach force, momentum carry-over policy, debris persistence, and cleanup behavior before adding any numeric detach/explosion policy.
 2. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
 3. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
 4. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.

@@ -1,84 +1,114 @@
--- VoidHunter Ship Spawner (Server)
--- Handles ship selection, spawning, player welding, team spawning, and death mechanics
+--[=[
+	VoidHunterShipSpawner (Server)
+
+	Authoritative responsibilities:
+	- ship preset selection/spawn
+	- player <-> ship registration via ShipRegistry
+	- team-aware spawn placement via TeamIdentity
+	- ship lifecycle teardown
+
+	Component HP/state belongs to ComponentAuthority.
+	Structural graph mutation belongs to StructuralAuthority.
+	No legacy partHealth/partMaxHealth maps or fabricated salvage path remain.
+]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
-local Debris = game:GetService("Debris")
+local Workspace = game:GetService("Workspace")
 
--- Team spawn positions (Red = left, Blue = right)
-local RED_SPAWN_CENTER = Vector3.new(-800, 5, 0)
+local StructuralAuthority = require(ReplicatedStorage.Shared.Ship:WaitForChild("StructuralAuthority"))
+local ShipRegistry = require(ReplicatedStorage.Shared.Ship:WaitForChild("ShipRegistry"))
+local TeamIdentity = require(ReplicatedStorage.Shared.Combat:WaitForChild("TeamIdentity"))
+
+local YELLOW_SPAWN_CENTER = Vector3.new(-800, 5, 0)
 local BLUE_SPAWN_CENTER = Vector3.new(800, 5, 0)
+local HANGAR_POSITION = Vector3.new(5000, 2, 4970)
 
-local activeShips = {} -- player -> ship mapping
-local partHealth = {} -- part -> current HP (persists across drops)
-local partMaxHealth = {} -- part -> max HP
-
--- Ship preset definitions
 local SHIP_PRESETS = {
 	Fighter = {
 		name = "Fighter",
 		color = Color3.fromRGB(200, 50, 50),
 		components = {
-			{type = "CommandCore", offset = Vector3.new(0, 0, 0)},
-			{type = "HullSmall", offset = Vector3.new(-7, 0, 0)},
-			{type = "HullSmall", offset = Vector3.new(7, 0, 0)},
-			{type = "StandardThruster", offset = Vector3.new(0, 0, -7)},
-			{type = "MassDriver", offset = Vector3.new(0, 0, 7)},
-		}
+			{ type = "CommandCore", offset = Vector3.new(0, 0, 0) },
+			{ type = "HullSmall", offset = Vector3.new(-7, 0, 0) },
+			{ type = "HullSmall", offset = Vector3.new(7, 0, 0) },
+			{ type = "StandardThruster", offset = Vector3.new(0, 0, -7) },
+			{ type = "MassDriver", offset = Vector3.new(0, 0, 7) },
+		},
 	},
 	Cruiser = {
 		name = "Cruiser",
 		color = Color3.fromRGB(50, 150, 200),
 		components = {
-			{type = "CommandCore", offset = Vector3.new(0, 0, 0)},
-			{type = "HullMedium", offset = Vector3.new(-7, 0, 0)},
-			{type = "HullMedium", offset = Vector3.new(7, 0, 0)},
-			{type = "StandardThruster", offset = Vector3.new(-7, 0, -7)},
-			{type = "StandardThruster", offset = Vector3.new(7, 0, -7)},
-			{type = "MissileLauncher", offset = Vector3.new(0, 0, 7)},
-			{type = "ShieldGenerator", offset = Vector3.new(0, 0, -14)},
-		}
+			{ type = "CommandCore", offset = Vector3.new(0, 0, 0) },
+			{ type = "HullMedium", offset = Vector3.new(-7, 0, 0) },
+			{ type = "HullMedium", offset = Vector3.new(7, 0, 0) },
+			{ type = "StandardThruster", offset = Vector3.new(-7, 0, -7) },
+			{ type = "StandardThruster", offset = Vector3.new(7, 0, -7) },
+			{ type = "MissileLauncher", offset = Vector3.new(0, 0, 7) },
+			{ type = "ShieldGenerator", offset = Vector3.new(0, 0, -14) },
+		},
 	},
 	Battleship = {
 		name = "Battleship",
 		color = Color3.fromRGB(50, 200, 100),
 		components = {
-			{type = "CommandCore", offset = Vector3.new(0, 0, 0)},
-			{type = "HullHeavy", offset = Vector3.new(0, 0, -14)},
-			{type = "StandardThruster", offset = Vector3.new(-7, 0, -14)},
-			{type = "StandardThruster", offset = Vector3.new(7, 0, -14)},
-			{type = "PlasmaBall", offset = Vector3.new(-7, 0, 7)},
-			{type = "PlasmaBall", offset = Vector3.new(7, 0, 7)},
-			{type = "Reactor", offset = Vector3.new(0, 0, 14)},
-		}
-	}
+			{ type = "CommandCore", offset = Vector3.new(0, 0, 0) },
+			{ type = "HullHeavy", offset = Vector3.new(0, 0, -14) },
+			{ type = "StandardThruster", offset = Vector3.new(-7, 0, -14) },
+			{ type = "StandardThruster", offset = Vector3.new(7, 0, -14) },
+			{ type = "PlasmaBall", offset = Vector3.new(-7, 0, 7) },
+			{ type = "PlasmaBall", offset = Vector3.new(7, 0, 7) },
+			{ type = "Reactor", offset = Vector3.new(0, 0, 14) },
+		},
+	},
 }
 
--- Get team spawn position
-local function getTeamSpawnPosition(team)
-	local basePos = team == "Red" and RED_SPAWN_CENTER or BLUE_SPAWN_CENTER
-	local offsetX = math.random(-50, 50)
-	local offsetZ = math.random(-150, 150)
-	return basePos + Vector3.new(offsetX, 0, offsetZ)
+local selectShipEvent = ReplicatedStorage:FindFirstChild("VoidHunterSelectShip")
+if not selectShipEvent then
+	selectShipEvent = Instance.new("RemoteEvent")
+	selectShipEvent.Name = "VoidHunterSelectShip"
+	selectShipEvent.Parent = ReplicatedStorage
 end
 
--- Create a ship from a preset
-local function createShipFromPreset(presetName, owner)
+local function getTeamSpawnPosition(team: TeamIdentity.TeamId): Vector3
+	local center = team == TeamIdentity.YELLOW and YELLOW_SPAWN_CENTER or BLUE_SPAWN_CENTER
+	return center + Vector3.new(math.random(-50, 50), 0, math.random(-150, 150))
+end
+
+local function destroyShip(player: Player, ship: Model)
+	if not ship or not ship.Parent then
+		ShipRegistry.UnregisterPlayer(player)
+		return
+	end
+
+	ship:SetAttribute("Destroyed", true)
+	ShipRegistry.UnregisterShip(ship)
+	player:SetAttribute("InShip", false)
+	player:SetAttribute("ShipType", nil)
+	ship:Destroy()
+end
+
+local function createShipFromPreset(presetName: string, owner: Player): (Model?, VehicleSeat?)
 	local preset = SHIP_PRESETS[presetName]
-	if not preset then return nil end
-	
-	-- Get team and spawn position
-	local team = owner:GetAttribute("Team") or "Red"
+	if not preset then
+		return nil, nil
+	end
+
+	local team = TeamIdentity.Get(owner)
+	if not team then
+		team = TeamIdentity.AssignDeterministic(owner.UserId)
+		TeamIdentity.Set(owner, team)
+	end
+
 	local spawnPos = getTeamSpawnPosition(team)
-	
-	-- Create ship model
 	local ship = Instance.new("Model")
 	ship.Name = owner.Name .. "_" .. presetName
 	ship:SetAttribute("IsShip", true)
 	ship:SetAttribute("OwnerId", owner.UserId)
 	ship:SetAttribute("ShipType", presetName)
-	
-	-- Create VehicleSeat for player to sit in
+	TeamIdentity.Set(ship, team)
+
 	local seat = Instance.new("VehicleSeat")
 	seat.Name = "VehicleSeat"
 	seat.Size = Vector3.new(2, 1, 2)
@@ -88,224 +118,113 @@ local function createShipFromPreset(presetName, owner)
 	seat.Material = Enum.Material.Metal
 	seat.Color = preset.color
 	seat.Parent = ship
-	
-	-- Create components
-	local components = {}
+
 	for _, compData in ipairs(preset.components) do
-		local compType = compData.type
-		local offset = compData.offset
-		
-		-- Find the component model in Workspace
-		local template = workspace:FindFirstChild(compType)
-		if template then
-			local world = template:FindFirstChild("world")
-			if world then
-				local body = world:FindFirstChild("body")
-				if body then
-					local meshPart = body:FindFirstChild("body_geom")
-					if meshPart then
-						local newPart = meshPart:Clone()
-						newPart.Name = compType
-						newPart.Position = spawnPos + offset + Vector3.new(0, 2, 0)
-						newPart.Anchored = false
-						newPart.CanCollide = true
-						newPart.Parent = ship
-						table.insert(components, newPart)
-						
-						-- Weld to seat
-						local weld = Instance.new("WeldConstraint")
-						weld.Part0 = seat
-						weld.Part1 = newPart
-						weld.Parent = newPart
-					end
-				end
-			end
+		local template = Workspace:FindFirstChild(compData.type)
+		local world = template and template:FindFirstChild("world")
+		local body = world and world:FindFirstChild("body")
+		local meshPart = body and body:FindFirstChild("body_geom")
+		if meshPart and meshPart:IsA("BasePart") then
+			local newPart = meshPart:Clone()
+			newPart.Name = compData.type
+			newPart.CFrame = CFrame.new(spawnPos + compData.offset + Vector3.new(0, 2, 0))
+			newPart.Anchored = false
+			newPart.CanCollide = true
+			newPart:SetAttribute("ComponentType", compData.type)
+			newPart.Parent = ship
+
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = seat
+			weld.Part1 = newPart
+			weld.Parent = newPart
 		end
 	end
-	
-	-- Set PrimaryPart
+
 	ship.PrimaryPart = seat
-	
-	ship.Parent = workspace
-	
-	-- Register with weapon controller
-	local weaponController = script.Parent:FindFirstChild("VoidHunterWeaponController")
-	if weaponController then
-		-- Ship will be registered when player sits
-	end
-	
+	ship.Parent = Workspace
+	StructuralAuthority.BindShip(ship)
+	ShipRegistry.Register(owner, ship)
+
 	return ship, seat
 end
 
--- Handle ship selection from hangar
-local function onShipSelected(player, shipName)
-	-- Check if player already has a ship
-	if activeShips[player] then
-		activeShips[player]:Destroy()
-		activeShips[player] = nil
+local function onShipSelected(player: Player, shipName: string)
+	if typeof(shipName) ~= "string" then
+		return
 	end
-	
-	-- Create new ship
+
+	local previousShip = ShipRegistry.GetShip(player)
+	if previousShip then
+		destroyShip(player, previousShip)
+	end
+
 	local ship, seat = createShipFromPreset(shipName, player)
-	if not ship then
+	if not ship or not seat then
 		warn("Failed to create ship: " .. shipName)
 		return
 	end
-	
-	activeShips[player] = ship
-	
-	-- Teleport player to arena
+
 	local character = player.Character
-	if character then
-		local hrp = character:FindFirstChild("HumanoidRootPart")
-		if hrp then
-			-- Teleport near the ship
-			hrp.CFrame = CFrame.new(seat.Position + Vector3.new(0, 3, 0))
-			
-			-- Force player to sit in the seat
-			local humanoid = character:FindFirstChild("Humanoid")
-			if humanoid then
-				humanoid.Sit = true
-				task.wait(0.1)
-				
-				-- Weld player to seat
-				local weld = Instance.new("WeldConstraint")
-				weld.Name = "PlayerShipWeld"
-				weld.Part0 = seat
-				weld.Part1 = hrp
-				weld.Parent = seat
-				
-				-- Set camera mode attribute
-				player:SetAttribute("InShip", true)
-				player:SetAttribute("ShipType", shipName)
-			end
-		end
+	local hrp = character and character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if hrp and humanoid then
+		hrp.CFrame = CFrame.new(seat.Position + Vector3.new(0, 3, 0))
+		humanoid.Sit = true
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Name = "PlayerShipWeld"
+		weld.Part0 = seat
+		weld.Part1 = hrp
+		weld.Parent = seat
 	end
-	
-	print(player.Name .. " spawned in " .. shipName)
+
+	player:SetAttribute("InShip", true)
+	player:SetAttribute("ShipType", shipName)
 end
 
--- Create RemoteEvent for ship selection
-local selectShipEvent = ReplicatedStorage:FindFirstChild("VoidHunterSelectShip")
-if not selectShipEvent then
-	selectShipEvent = Instance.new("RemoteEvent")
-	selectShipEvent.Name = "VoidHunterSelectShip"
-	selectShipEvent.Parent = ReplicatedStorage
-end
+selectShipEvent.OnServerEvent:Connect(onShipSelected)
 
-selectShipEvent.OnServerEvent:Connect(function(player, shipName)
-	onShipSelected(player, shipName)
-end)
-
--- Handle ship death - break apart and drop parts
-local function onShipDestroyed(ship, owner)
-	if not ship then return end
-	
-	-- Create dropped parts folder if needed
-	local droppedPartsFolder = workspace:FindFirstChild("DroppedParts")
-	if not droppedPartsFolder then
-		droppedPartsFolder = Instance.new("Folder")
-		droppedPartsFolder.Name = "DroppedParts"
-		droppedPartsFolder.Parent = workspace
-	end
-	
-	-- Break ship apart
-	local shipPos = ship.PrimaryPart and ship.PrimaryPart.Position or ship:GetPivot().Position
-	
-	for _, part in ipairs(ship:GetDescendants()) do
-		if part:IsA("BasePart") and part.Name ~= "VehicleSeat" then
-			-- Get part HP
-			local currentHP = partHealth[part] or 100
-			local maxHP = partMaxHealth[part] or 100
-			local hpPercent = currentHP / maxHP
-			
-			-- Parts with >40% HP drop with 80% HP
-			if hpPercent > 0.4 then
-				local droppedPart = part:Clone()
-				droppedPart.Name = part.Name
-				droppedPart.Anchored = true
-				droppedPart.CanCollide = true
-				droppedPart.Material = Enum.Material.Metal
-				droppedPart.Color = part.Color -- Reset color (remove damage tint)
-				
-				-- Random scatter position
-				local scatterX = math.random(-20, 20)
-				local scatterZ = math.random(-20, 20)
-				droppedPart.Position = Vector3.new(shipPos.X + scatterX, 3.5, shipPos.Z + scatterZ)
-				droppedPart.Parent = droppedPartsFolder
-				
-				-- Set HP to 80% of max (persists)
-				local newHP = math.floor(maxHP * 0.8)
-				partHealth[droppedPart] = newHP
-				partMaxHealth[droppedPart] = maxHP
-				droppedPart:SetAttribute("PartHP", newHP)
-				droppedPart:SetAttribute("MaxHP", maxHP)
-				droppedPart:SetAttribute("IsDroppedPart", true)
-			end
-		end
-	end
-	
-	-- Destroy ship
-	ship:Destroy()
-	activeShips[owner] = nil
-end
-
--- Handle player death - respawn at hangar
-local function onPlayerDied(player)
-	-- Break ship apart
-	if activeShips[player] then
-		onShipDestroyed(activeShips[player], player)
-	end
-	
-	-- Reset attributes
-	player:SetAttribute("InShip", false)
-	player:SetAttribute("ShipType", nil)
-	
-	-- Teleport to hangar
-	local character = player.Character
-	if character then
-		local hrp = character:FindFirstChild("HumanoidRootPart")
-		if hrp then
-			hrp.CFrame = CFrame.new(Vector3.new(5000, 2, 4970))
-		end
-	end
-end
-
--- Handle player joining
 Players.PlayerAdded:Connect(function(player)
+	if not TeamIdentity.Get(player) then
+		TeamIdentity.Set(player, TeamIdentity.AssignDeterministic(player.UserId))
+	end
+
 	player:SetAttribute("InShip", false)
-	
-	-- Track character death
+
 	player.CharacterAdded:Connect(function(character)
 		local humanoid = character:WaitForChild("Humanoid")
 		humanoid.Died:Connect(function()
-			onPlayerDied(player)
+			local ship = ShipRegistry.GetShip(player)
+			if ship then
+				destroyShip(player, ship)
+			end
+			player:SetAttribute("InShip", false)
+			player:SetAttribute("ShipType", nil)
 		end)
 	end)
 end)
 
--- Handle player leaving
 Players.PlayerRemoving:Connect(function(player)
-	if activeShips[player] then
-		activeShips[player]:Destroy()
-		activeShips[player] = nil
+	local ship = ShipRegistry.GetShip(player)
+	if ship then
+		destroyShip(player, ship)
+	else
+		ShipRegistry.UnregisterPlayer(player)
 	end
 end)
 
--- Handle proximity prompts in hangar
 local function setupHangarPrompts()
-	local hangar = workspace:FindFirstChild("Hangar")
-	if not hangar then return end
-	
-	local shipSelections = hangar:FindFirstChild("ShipSelections")
-	if not shipSelections then return end
-	
+	local hangar = Workspace:FindFirstChild("Hangar")
+	local shipSelections = hangar and hangar:FindFirstChild("ShipSelections")
+	if not shipSelections then
+		return
+	end
+
 	for _, item in ipairs(shipSelections:GetChildren()) do
-		if item:IsA("Part") and item:FindFirstChild("SelectPrompt") then
-			local prompt = item.SelectPrompt
+		if item:IsA("BasePart") then
+			local prompt = item:FindFirstChild("SelectPrompt")
 			local shipName = item:GetAttribute("ShipName")
-			
-			if shipName then
+			if prompt and prompt:IsA("ProximityPrompt") and typeof(shipName) == "string" then
 				prompt.Triggered:Connect(function(player)
 					onShipSelected(player, shipName)
 				end)
@@ -315,5 +234,4 @@ local function setupHangarPrompts()
 end
 
 setupHangarPrompts()
-
-print("[ShipSpawner] Loaded")
+print("[ShipSpawner] Authoritative ship lifecycle loaded")

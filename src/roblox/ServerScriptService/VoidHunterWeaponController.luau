@@ -23,6 +23,7 @@ local CapacitorSystem = require(ReplicatedStorage.Shared.Combat.CapacitorSystem)
 local ShieldSystem = require(ReplicatedStorage.Shared.Combat.ShieldSystem)
 local BallisticsEngine = require(ReplicatedStorage.Shared.Combat.BallisticsEngine)
 local TeamIdentity = require(ReplicatedStorage.Shared.Combat:WaitForChild("TeamIdentity"))
+local ShipRegistry = require(ReplicatedStorage.Shared.Ship:WaitForChild("ShipRegistry"))
 local UNIT = 7
 
 -- Create RemoteEvents if they don't exist
@@ -48,57 +49,14 @@ local shipCapacitors = {} :: { [Model]: any }
 local scramblerCooldowns = {}
 local ballistics = BallisticsEngine.new(nil)
 
--- Compatibility views over ComponentAuthority.
--- Existing call sites continue to use partHealth[part] without creating a second
--- source of truth.
-local partHealth = setmetatable({}, {
-	__index = function(_, part)
-		if not part or not part:IsA("BasePart") then
-			return nil
-		end
-		local state = ComponentAuthority.Get(part) or ComponentAuthority.Bind(part)
-		return state and state.Health or nil
-	end,
-	__newindex = function(_, part, value)
-		if not part or not part:IsA("BasePart") then
-			return
-		end
-		if value == nil then
-			ComponentAuthority.Clear(part)
-			return
-		end
-		ComponentAuthority.SetHealth(part, value)
-	end,
-})
-
-local partMaxHealth = setmetatable({}, {
-	__index = function(_, part)
-		if not part or not part:IsA("BasePart") then
-			return nil
-		end
-		local state = ComponentAuthority.Get(part) or ComponentAuthority.Bind(part)
-		return state and state.MaxHealth or nil
-	end,
-	__newindex = function() end,
-})
-
 -- Rate limiting (max requests per second per player)
 local RATE_LIMIT = 20
 local playerRequestCounts = {}
 
 -- Helper Functions
-local function getComponentType(part)
-	if not part or not part:IsA("BasePart") then return nil end
-	local explicit = part:GetAttribute("ComponentType")
-	if typeof(explicit) == "string" and Components.Types[explicit] then
-		return explicit
-	end
-	for typeName, def in pairs(Components.Types) do
-		if def.Name == part.Name then
-			return typeName
-		end
-	end
-	return nil
+local function getComponentType(part: BasePart): string?
+	local state = ComponentAuthority.Get(part) or ComponentAuthority.Bind(part)
+	return state and state.TypeName or nil
 end
 
 local function isHull(part)
@@ -125,8 +83,8 @@ local function findNearestEnemy(ship, range)
 	local shipPos = ship.PrimaryPart and ship.PrimaryPart.Position or ship:GetPivot().Position
 	local nearest, nearestDist = nil, range
 
-	for _, obj in ipairs(workspace:GetDescendants()) do
-		if obj:IsA("Model") and obj:GetAttribute("IsShip") and obj ~= ship then
+	for _, obj in pairs(ShipRegistry.GetAll()) do
+		if obj ~= ship then
 			local objPos = obj.PrimaryPart and obj.PrimaryPart.Position or obj:GetPivot().Position
 			local dist = (objPos - shipPos).Magnitude
 			if dist < nearestDist then
@@ -147,16 +105,15 @@ local function validatePlayer(player)
 	return true
 end
 
-local function validateShip(player, ship)
+local function validateShip(player: Player, ship: Model): (boolean, string?)
 	if not ship or not ship.Parent then
 		return false, "Invalid ship"
 	end
-	local ownerId = ship:GetAttribute("OwnerId")
-	if ownerId and ownerId ~= player.UserId then
-		return false, "Ship ownership mismatch"
-	end
 	if not ship:GetAttribute("IsShip") then
 		return false, "Not a valid ship"
+	end
+	if not ShipRegistry.IsOwner(player, ship) then
+		return false, "Ship ownership mismatch"
 	end
 	return true
 end
@@ -337,7 +294,7 @@ function destroyShip(ship)
 
 	ship:SetAttribute("Destroyed", true)
 	local owner
-	for player, playerShip in pairs(activeShips or {}) do
+	for player, playerShip in pairs(ShipRegistry.GetAll()) do
 		if playerShip == ship then
 			owner = player
 			break

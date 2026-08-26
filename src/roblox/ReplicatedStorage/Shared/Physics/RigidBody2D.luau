@@ -1,7 +1,7 @@
 --[[
 	RigidBody2D: Core 2D Rigid Body Kinematics & Dynamics Engine.
 	Sourced from AlterOrb / FunOrb Client Engine Decompile & Tuned for Roblox X-Z Plane.
-	
+
 	Coordinate Space:
 	  - 2D Logical Space: Vector2(X, Z) where X is lateral/starboard and Z is forward/longitudinal.
 	  - Rotation: Radians (Yaw angle around world Y-axis).
@@ -14,7 +14,6 @@ local MassPoint = require(game.ReplicatedStorage.Shared.Physics.MassPoint)
 local RigidBody2D = {}
 RigidBody2D.__index = RigidBody2D
 
--- 2D Vector Rotation Helper
 local function rotate2D(vec: Vector2, angle: number): Vector2
 	local cos = math.cos(angle)
 	local sin = math.sin(angle)
@@ -24,7 +23,6 @@ local function rotate2D(vec: Vector2, angle: number): Vector2
 	)
 end
 
--- 2D Cross Product (r x F = r.X * F.Y - r.Y * F.X)
 local function cross2D(a: Vector2, b: Vector2): number
 	return (a.X * b.Y) - (a.Y * b.X)
 end
@@ -37,37 +35,29 @@ function RigidBody2D.new(initialPos: Vector2?, initialRot: number?, id: string?)
 	self.IsActive = true
 	self.CollisionGroup = "Default"
 	self.Restitution = PhysicsConfig.DEFAULT_RESTITUTION
-	
-	-- Kinematic State (Vector2: X, Z)
+
 	self.Position = initialPos or Vector2.zero
 	self.Velocity = Vector2.zero
 	self.Rotation = initialRot or 0
 	self.AngularVelocity = 0
 
-	-- Mass & Inertia Properties
 	self.MassPoints = {} :: { any }
 	self.Mass = PhysicsConfig.BASE_CHASSIS_MASS
 	self.InverseMass = 1 / self.Mass
-	self.CenterOfMass = Vector2.zero -- In local coordinates relative to body origin
+	self.CenterOfMass = Vector2.zero
 	self.MomentOfInertia = PhysicsConfig.BASE_CHASSIS_INERTIA
 	self.InverseMomentOfInertia = 1 / self.MomentOfInertia
 	self.BoundingRadius = 10.0
 
-	-- Force & Torque Accumulators (cleared per step)
 	self.ForceAccumulator = Vector2.zero
 	self.TorqueAccumulator = 0
 
-	-- Visual Binding
 	self.BoundModel = nil :: Model?
 	self.BoundPart = nil :: BasePart?
 	self.FixedY = PhysicsConfig.FIXED_Y_ELEVATION
 
 	return self
 end
-
------------------------------------------------------------------------------
--- MASS & INERTIA RECALCULATION (Parallel Axis Theorem)
------------------------------------------------------------------------------
 
 function RigidBody2D:AddMassPoint(mass: number, localPosition: Vector2?, localInertia: number?, pieceType: string?, id: string?)
 	local mp = MassPoint.new(mass, localPosition, localInertia, pieceType, id)
@@ -104,7 +94,6 @@ function RigidBody2D:RecalculateMassProperties()
 
 	local count = #self.MassPoints
 	if count == 0 then
-		-- Fallback to default base chassis values
 		self.Mass = PhysicsConfig.BASE_CHASSIS_MASS
 		self.InverseMass = 1 / self.Mass
 		self.CenterOfMass = Vector2.zero
@@ -114,7 +103,6 @@ function RigidBody2D:RecalculateMassProperties()
 		return
 	end
 
-	-- 1. Aggregate Mass and First Moment of Mass (Center of Mass)
 	local totalMass = 0
 	local weightedPos = Vector2.zero
 	for _, mp in ipairs(self.MassPoints) do
@@ -126,11 +114,8 @@ function RigidBody2D:RecalculateMassProperties()
 	self.InverseMass = 1 / self.Mass
 	self.CenterOfMass = weightedPos / self.Mass
 
-	-- 2. Second Moment of Mass: Total Moment of Inertia relative to Center of Mass
-	-- I_total = sum(I_local + m_i * dist(pos_i, COM)^2)
 	local totalInertia = 0
 	local maxRadiusSq = 0
-
 	for _, mp in ipairs(self.MassPoints) do
 		totalInertia += mp:CalculateInertiaContribution(self.CenterOfMass)
 		local distSq = (mp.LocalPosition - self.CenterOfMass).MagnitudeSq
@@ -153,10 +138,6 @@ function RigidBody2D:SetStatic(isStatic: boolean)
 	end
 end
 
------------------------------------------------------------------------------
--- FORCE, TORQUE & VECTORED THRUST APPLICATION
------------------------------------------------------------------------------
-
 function RigidBody2D:ClearAccumulators()
 	self.ForceAccumulator = Vector2.zero
 	self.TorqueAccumulator = 0
@@ -172,25 +153,17 @@ function RigidBody2D:AddTorque(torque: number)
 	self.TorqueAccumulator += torque
 end
 
--- Applies force at a specific point in body local space
--- Automatically calculates the rotational torque: tau = r x F
 function RigidBody2D:AddForceAtLocalPoint(localForce: Vector2, localPoint: Vector2)
 	if self.IsStatic then return end
-	
-	-- Transform force from local to world space
 	local worldForce = rotate2D(localForce, self.Rotation)
 	self.ForceAccumulator += worldForce
 
-	-- Vector from Center of Mass to the application point in local space
 	local rLocal = localPoint - self.CenterOfMass
 	local rWorld = rotate2D(rLocal, self.Rotation)
-
-	-- 2D Torque: tau = rWorld x worldForce
 	local torque = cross2D(rWorld, worldForce)
 	self.TorqueAccumulator += torque
 end
 
--- Applies force at a world coordinate point
 function RigidBody2D:AddForceAtWorldPoint(worldForce: Vector2, worldPoint: Vector2)
 	if self.IsStatic then return end
 	self.ForceAccumulator += worldForce
@@ -201,43 +174,54 @@ function RigidBody2D:AddForceAtWorldPoint(worldForce: Vector2, worldPoint: Vecto
 	self.TorqueAccumulator += torque
 end
 
--- Vectored Thruster Application (Emulated AlterOrb Mechanic)
--- If thrusters are not placed symmetrically along the COM centerline, the ship will spin!
 function RigidBody2D:ApplyThrust(localThrusterPos: Vector2, localThrustDirection: Vector2, magnitude: number)
 	if self.IsStatic or magnitude <= 0 then return end
-	local localThrustVector = localThrustDirection.Unit * magnitude
+	local localThrustVector = localThrusterDirection.Unit * magnitude
 	self:AddForceAtLocalPoint(localThrustVector, localThrusterPos)
 end
 
--- Applies an instantaneous impulse at a world contact point (used in collisions)
 function RigidBody2D:ApplyImpulseAtWorldPoint(worldImpulse: Vector2, worldContactPoint: Vector2)
 	if self.IsStatic then return end
 	self.Velocity += worldImpulse * self.InverseMass
-	
+
 	local worldCOM = self:GetWorldCenterOfMass()
 	local rWorld = worldContactPoint - worldCOM
 	local angularImpulse = cross2D(rWorld, worldImpulse)
 	self.AngularVelocity += angularImpulse * self.InverseMomentOfInertia
 end
 
------------------------------------------------------------------------------
--- INERTIAL DAMPING & TIME INTEGRATION (AlterOrb 50Hz Loop)
------------------------------------------------------------------------------
+-- Returns the instantaneous world-point velocity implied by this rigid body.
+-- This is the correct kinematic seed for a component that becomes independent
+-- at a known local position; no arbitrary detachment impulse is introduced.
+function RigidBody2D:GetWorldPointVelocity(localPoint: Vector2): Vector2
+	local rWorld = rotate2D(localPoint - self.CenterOfMass, self.Rotation)
+	local angularVelocity = Vector2.new(-self.AngularVelocity * rWorld.Y, self.AngularVelocity * rWorld.X)
+	return self.Velocity + angularVelocity
+end
+
+-- Copies the parent's instantaneous rigid-body kinematics into a detached body.
+-- The returned body still requires its own mass points to be populated by the
+-- structural layer before it is registered with PhysicsWorld.
+function RigidBody2D:CreateDetachedBody(localOrigin: Vector2, newId: string?): any
+	local worldPosition = self:LocalToWorld(localOrigin)
+	local detached = RigidBody2D.new(worldPosition, self.Rotation, newId)
+	detached.Velocity = self:GetWorldPointVelocity(localOrigin)
+	detached.AngularVelocity = self.AngularVelocity
+	detached.Restitution = self.Restitution
+	detached.FixedY = self.FixedY
+	return detached
+end
 
 function RigidBody2D:ApplyInertialDamping(dt: number, linearDampingMult: number?, angularDampingMult: number?)
 	if self.IsStatic then return end
-	
 	local linDamp = linearDampingMult or PhysicsConfig.LINEAR_DAMPING
 	local angDamp = angularDampingMult or PhysicsConfig.ANGULAR_DAMPING
 
-	-- Exponential decay: v = v * pow(damp, dt)
 	local linFactor = math.pow(linDamp, dt)
 	local angFactor = math.pow(angDamp, dt)
-
 	self.Velocity *= linFactor
 	self.AngularVelocity *= angFactor
 
-	-- Snap micro-velocities to zero to prevent floating point drift
 	if self.Velocity.MagnitudeSq < 0.0001 then
 		self.Velocity = Vector2.zero
 	end
@@ -252,11 +236,9 @@ function RigidBody2D:Integrate(dt: number, isBoosting: boolean?)
 		return
 	end
 
-	-- 1. Linear Integration: a = F / m
 	local linearAccel = self.ForceAccumulator * self.InverseMass
 	self.Velocity += linearAccel * dt
 
-	-- Velocity Clamping
 	local maxSpeed = isBoosting and PhysicsConfig.BOOST_MAX_LINEAR_SPEED or PhysicsConfig.MAX_LINEAR_SPEED
 	if self.Velocity.Magnitude > maxSpeed then
 		self.Velocity = self.Velocity.Unit * maxSpeed
@@ -264,29 +246,17 @@ function RigidBody2D:Integrate(dt: number, isBoosting: boolean?)
 
 	self.Position += self.Velocity * dt
 
-	-- 2. Angular Integration: alpha = tau / I
 	local angularAccel = self.TorqueAccumulator * self.InverseMomentOfInertia
 	self.AngularVelocity += angularAccel * dt
-
-	-- Angular Velocity Clamping
 	self.AngularVelocity = math.clamp(self.AngularVelocity, -PhysicsConfig.MAX_ANGULAR_SPEED, PhysicsConfig.MAX_ANGULAR_SPEED)
 	self.Rotation += self.AngularVelocity * dt
-
-	-- Normalize rotation angle to [0, 2*pi)
 	self.Rotation = self.Rotation % (math.pi * 2)
-
-	-- 3. Clear accumulators
 	self:ClearAccumulators()
 
-	-- 4. Sync transform to visual model if bound
 	if self.BoundModel or self.BoundPart then
 		self:SyncToVisual(self.FixedY)
 	end
 end
-
------------------------------------------------------------------------------
--- COORDINATE TRANSFORMATIONS & HELPERS
------------------------------------------------------------------------------
 
 function RigidBody2D:GetWorldCenterOfMass(): Vector2
 	return self.Position + rotate2D(self.CenterOfMass, self.Rotation)
@@ -309,22 +279,15 @@ function RigidBody2D:WorldDirectionToLocal(worldDir: Vector2): Vector2
 end
 
 function RigidBody2D:GetForwardVector2D(): Vector2
-	-- In X-Z plane, Vector2(0, 1) is Forward
 	return rotate2D(Vector2.new(0, 1), self.Rotation)
 end
 
 function RigidBody2D:GetRightVector2D(): Vector2
-	-- In X-Z plane, Vector2(1, 0) is Right (Starboard)
 	return rotate2D(Vector2.new(1, 0), self.Rotation)
 end
 
------------------------------------------------------------------------------
--- ROBLOX 3D WORLD SYNCHRONIZATION
------------------------------------------------------------------------------
-
 function RigidBody2D:GetWorldCFrame(fixedY: number?): CFrame
 	local y = fixedY or self.FixedY
-	-- Yaw rotation: Roblox rotation around Y-axis is CFrame.Angles(0, -Rotation, 0)
 	return CFrame.new(self.Position.X, y, self.Position.Y) * CFrame.Angles(0, -self.Rotation, 0)
 end
 
@@ -336,16 +299,12 @@ end
 
 function RigidBody2D:BindModel(model: Model, fixedY: number?)
 	self.BoundModel = model
-	if fixedY then
-		self.FixedY = fixedY
-	end
+	if fixedY then self.FixedY = fixedY end
 end
 
 function RigidBody2D:BindPart(part: BasePart, fixedY: number?)
 	self.BoundPart = part
-	if fixedY then
-		self.FixedY = fixedY
-	end
+	if fixedY then self.FixedY = fixedY end
 end
 
 function RigidBody2D:SyncToVisual(fixedY: number?)

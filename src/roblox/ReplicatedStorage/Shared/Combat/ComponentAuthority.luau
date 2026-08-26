@@ -2,16 +2,11 @@
 	ComponentAuthority
 	Canonical runtime state for Void Hunters components.
 
-	Purpose:
-	- Keep gameplay state in Lua rather than scattering authoritative values across
-	  BasePart properties and subsystem-local dictionaries.
-	- Mirror the original `ml` semantics where those fields are recovered.
-	- Treat the Roblox Instance as a projection/visual binding, not the source of truth.
+	The Lua state is authoritative; Instance Attributes are diagnostic/persistence
+	mirrors. Structural mutations are handled by StructuralAuthority.
 
-	Source policy:
-	- Type/HP definitions come from VoidHunterComponents where present.
-	- 15% critical flashing is USER_OBSERVED and deliberately isolated as a tunable
-	  presentation rule until the original render method is recovered.
+	15% critical presentation threshold is user-observed and remains isolated until
+	the original render/update method is recovered and code-verified.
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -46,7 +41,7 @@ local nextId = 0
 
 local function newId(part: BasePart): string
 	nextId += 1
-	return string.format("component_%d_%d", part:GetDebugId(), nextId)
+	return string.format("component_%s_%d", part:GetDebugId(), nextId)
 end
 
 local function findDefinition(part: BasePart): (string?, any?)
@@ -60,22 +55,15 @@ local function findDefinition(part: BasePart): (string?, any?)
 			return typeName, definition
 		end
 	end
-
 	return nil, nil
 end
 
 local function readHealth(definition: any): number
-	if type(definition) ~= "table" then
-		return 0
-	end
+	if type(definition) ~= "table" then return 0 end
 	local hp = definition.HP
-	if typeof(hp) == "number" and hp >= 0 then
-		return hp
-	end
+	if typeof(hp) == "number" and hp >= 0 then return hp end
 	local maxHp = definition.MaxHP
-	if typeof(maxHp) == "number" and maxHp >= 0 then
-		return maxHp
-	end
+	if typeof(maxHp) == "number" and maxHp >= 0 then return maxHp end
 	return 0
 end
 
@@ -88,9 +76,7 @@ function ComponentAuthority.IsComponent(part: Instance): boolean
 end
 
 function ComponentAuthority.Bind(part: BasePart, explicitTypeName: string?): ComponentState?
-	if not part or not part:IsA("BasePart") then
-		return nil
-	end
+	if not part or not part:IsA("BasePart") then return nil end
 
 	local typeName, definition = explicitTypeName, nil
 	if typeName then
@@ -98,16 +84,14 @@ function ComponentAuthority.Bind(part: BasePart, explicitTypeName: string?): Com
 	else
 		typeName, definition = findDefinition(part)
 	end
-	if not typeName then
-		return nil
-	end
+	if not typeName or type(definition) ~= "table" then return nil end
 
 	local existing = states[part]
-	if existing then
-		return existing
-	end
+	if existing then return existing end
 
 	local maxHealth = readHealth(definition)
+	local existingBaseColor = part:GetAttribute("BaseColor")
+	local baseColor = typeof(existingBaseColor) == "Color3" and existingBaseColor or part.Color
 	local state: ComponentState = {
 		Id = part:GetAttribute("ComponentId") or newId(part),
 		TypeName = typeName,
@@ -126,10 +110,9 @@ function ComponentAuthority.Bind(part: BasePart, explicitTypeName: string?): Com
 		Destroyed = false,
 		Critical = false,
 		BoundPart = part,
-		BaseColor = part:GetAttribute("BaseColor") and part:GetAttribute("BaseColor") or part.Color,
+		BaseColor = baseColor,
 	}
 
-	-- Attributes are mirrors for diagnostics/persistence, never the authoritative state.
 	part:SetAttribute("ComponentId", state.Id)
 	part:SetAttribute("ComponentType", state.TypeName)
 	part:SetAttribute("ComponentHealth", state.Health)
@@ -145,9 +128,7 @@ function ComponentAuthority.BindShip(ship: Model): { [BasePart]: ComponentState 
 	for _, instance in ipairs(ship:GetDescendants()) do
 		if instance:IsA("BasePart") then
 			local state = ComponentAuthority.Bind(instance)
-			if state then
-				bound[instance] = state
-			end
+			if state then bound[instance] = state end
 		end
 	end
 	return bound
@@ -155,9 +136,7 @@ end
 
 local function updateVisual(state: ComponentState)
 	local part = state.BoundPart
-	if not part or not part.Parent then
-		return
-	end
+	if not part or not part.Parent then return end
 
 	local maxHealth = math.max(state.MaxHealth, 1)
 	local fraction = math.clamp(state.Health / maxHealth, 0, 1)
@@ -165,6 +144,8 @@ local function updateVisual(state: ComponentState)
 
 	if state.Destroyed then
 		part:SetAttribute("ComponentState", "Destroyed")
+		part:SetAttribute("ComponentHealth", 0)
+		part:SetAttribute("ComponentMaxHealth", state.MaxHealth)
 		return
 	end
 
@@ -172,35 +153,23 @@ local function updateVisual(state: ComponentState)
 	part:SetAttribute("ComponentHealth", state.Health)
 	part:SetAttribute("ComponentMaxHealth", state.MaxHealth)
 
-	-- Damage visualization uses immutable BaseColor; never compounds color drift.
 	local damage = 1 - fraction
-	local warning = Color3.fromRGB(255, 30, 30)
-	part.Color = state.BaseColor:Lerp(warning, damage)
+	part.Color = state.BaseColor:Lerp(Color3.fromRGB(255, 30, 30), damage)
 end
 
 function ComponentAuthority.SetHealth(part: BasePart, health: number): ComponentState?
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state then
-		return nil
-	end
-
+	if not state then return nil end
 	state.Health = math.clamp(health, 0, state.MaxHealth)
-	if state.Health <= 0 then
-		state.Health = 0
-		state.Destroyed = true
-	end
+	state.Destroyed = state.Health <= 0
 	updateVisual(state)
 	return state
 end
 
 function ComponentAuthority.ApplyDamage(part: BasePart, damage: number): (ComponentState?, boolean)
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state or state.Destroyed then
-		return state, false
-	end
-	if typeof(damage) ~= "number" or damage <= 0 then
-		return state, false
-	end
+	if not state or state.Destroyed then return state, false end
+	if typeof(damage) ~= "number" or damage <= 0 then return state, false end
 
 	state.Health = math.max(0, state.Health - damage)
 	local destroyed = state.Health <= 0
@@ -211,10 +180,7 @@ end
 
 function ComponentAuthority.Repair(part: BasePart, amount: number): (ComponentState?, number)
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state or typeof(amount) ~= "number" or amount <= 0 then
-		return state, 0
-	end
-	if state.Destroyed then
+	if not state or typeof(amount) ~= "number" or amount <= 0 or state.Destroyed then
 		return state, 0
 	end
 
@@ -226,9 +192,7 @@ end
 
 function ComponentAuthority.MarkDestroyed(part: BasePart): ComponentState?
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state then
-		return nil
-	end
+	if not state then return nil end
 	state.Health = 0
 	state.Destroyed = true
 	updateVisual(state)
@@ -237,18 +201,34 @@ end
 
 function ComponentAuthority.SetParent(part: BasePart, parentPart: BasePart?): ComponentState?
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state then
-		return nil
+	if not state then return nil end
+
+	if parentPart then
+		local parentState = states[parentPart] or ComponentAuthority.Bind(parentPart)
+		if parentState then
+			-- Remove stale parent relationship before assigning the new one.
+			if state.ParentId and state.ParentId ~= parentState.Id then
+				for childId in pairs(parentState.Children) do
+					if childId == state.Id then parentState.Children[childId] = nil end
+				end
+			end
+			state.ParentId = parentState.Id
+			parentState.Children[state.Id] = state.Id
+		end
+	else
+		state.ParentId = nil
 	end
-	local parentState = parentPart and (states[parentPart] or ComponentAuthority.Bind(parentPart)) or nil
-	state.ParentId = parentState and parentState.Id or nil
-	if parentState then
-		parentState.Children[state.Id] = state.Id
-	end
+
+	part:SetAttribute("ParentComponentId", state.ParentId)
 	return state
 end
 
 function ComponentAuthority.Clear(part: BasePart)
+	local state = states[part]
+	if state and state.ParentId then
+		-- Parent state may have been garbage-collected; remove only local state here.
+		state.ParentId = nil
+	end
 	states[part] = nil
 end
 

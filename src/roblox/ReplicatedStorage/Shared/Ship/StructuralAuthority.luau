@@ -30,16 +30,18 @@ local function collectNodeSubtree(graph: any, rootNodeId: string): { any }
 	local result = {}
 	local visited: { [string]: boolean } = {}
 	local queue = { rootNodeId }
+	local head = 1
 
-	while #queue > 0 do
-		local nodeId = table.remove(queue, 1)
+	while head <= #queue do
+		local nodeId = queue[head]
+		head += 1
 		if not visited[nodeId] then
 			visited[nodeId] = true
 			local node = graph.Nodes[nodeId]
 			if node then
-				table.insert(result, node)
+				result[#result + 1] = node
 				for _, childId in pairs(node.ChildNodes) do
-					table.insert(queue, childId)
+					queue[#queue + 1] = childId
 				end
 			end
 		end
@@ -123,7 +125,7 @@ function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason
 	local parts = {}
 	for _, node in ipairs(nodes) do
 		if node.Part and node.Part.Parent then
-			table.insert(parts, node.Part)
+			parts[#parts + 1] = node.Part
 		end
 	end
 	if #parts == 0 then
@@ -153,10 +155,7 @@ function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason
 		detachedPart.Parent = debrisAssembly
 	end
 
-	if parts[1] then
-		debrisAssembly.PrimaryPart = parts[1]
-	end
-
+	debrisAssembly.PrimaryPart = parts[1]
 	for _, detachedPart in ipairs(parts) do
 		detachedPart.Anchored = false
 		detachedPart.AssemblyLinearVelocity = sourceVelocity
@@ -178,14 +177,16 @@ function StructuralAuthority.SeverDisconnected(ship: Model): { Model }
 
 	local reachable: { [string]: boolean } = {}
 	local queue = { graph.RootNodeId }
-	while #queue > 0 do
-		local nodeId = table.remove(queue, 1)
+	local head = 1
+	while head <= #queue do
+		local nodeId = queue[head]
+		head += 1
 		if not reachable[nodeId] then
 			reachable[nodeId] = true
 			local node = graph.Nodes[nodeId]
 			if node then
 				for _, childId in pairs(node.ChildNodes) do
-					table.insert(queue, childId)
+					queue[#queue + 1] = childId
 				end
 			end
 		end
@@ -195,7 +196,7 @@ function StructuralAuthority.SeverDisconnected(ship: Model): { Model }
 	local rootsToDetach = {}
 	for nodeId, node in pairs(graph.Nodes) do
 		if not reachable[nodeId] and node.ParentNodeId == nil then
-			table.insert(rootsToDetach, node)
+			rootsToDetach[#rootsToDetach + 1] = node
 		end
 	end
 
@@ -203,7 +204,7 @@ function StructuralAuthority.SeverDisconnected(ship: Model): { Model }
 		if node.Part and node.Part.Parent then
 			local assembly = StructuralAuthority.DetachComponent(ship, node.Part, "Disconnected")
 			if assembly then
-				table.insert(detached, assembly)
+				detached[#detached + 1] = assembly
 			end
 		end
 	end
@@ -212,7 +213,7 @@ function StructuralAuthority.SeverDisconnected(ship: Model): { Model }
 end
 
 function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, newPart: BasePart, componentType: string, maxSnapDistance: number?): (Model?, boolean)
-	if not ship or not oldPart or not newPart then
+	if not ship or not oldPart or not newPart or oldPart == newPart then
 		return nil, false
 	end
 
@@ -223,17 +224,30 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		return nil, false
 	end
 
+	local oldCFrame = oldPart.CFrame
 	local detached = StructuralAuthority.DetachComponent(ship, oldPart, "Replacement")
 	if not detached then
 		return nil, false
 	end
 
-	local _, err = StructuralAuthority.AttachComponent(ship, newPart, componentType, maxSnapDistance)
-	if err then
-		return detached, false
+	local _, attachError = StructuralAuthority.AttachComponent(ship, newPart, componentType, maxSnapDistance)
+	if not attachError then
+		return detached, true
 	end
 
-	return detached, true
+	-- Replacement failed. Restore the old physical assembly rather than silently
+	-- losing a valid component. Exact hardpoint restoration remains source-fidelity
+	-- work until the original replacement method is fully recovered.
+	local oldRoot = detached.PrimaryPart or detached:FindFirstChildWhichIsA("BasePart", true)
+	if oldRoot then
+		detached.Parent = ship
+		oldRoot.CFrame = oldCFrame
+		oldRoot:SetAttribute("IsDebris", nil)
+		oldRoot:SetAttribute("ComponentDetached", nil)
+		ComponentAuthority.SetParent(oldRoot, nil)
+	end
+
+	return detached, false
 end
 
 return StructuralAuthority

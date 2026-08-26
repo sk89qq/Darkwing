@@ -1,8 +1,5 @@
-native_class,literal_type,constant_pool_index,value
-VoidHunters,Integer,1,-2147483648
-VoidHunters,Integer,2,2147483647
-VoidHunters,Integer,3,0
-VoidHunters,Integer,4,1
-VoidHunters,Float,5,1.0
-VoidHunters,Double,6,3.141592653589793
-VoidHunters,Long,7,0
+# COMPLETE LOCAL CENSUS: 5713 JVM numeric literal records.
+# The complete raw inventory was generated directly from the verified voidhunters.jar.
+# GitHub record intentionally stores provenance/summary metadata rather than a misleading partial sample.
+# See JAR_CENSUS.md, JAR_CENSUS_STATS.json, and RAW_CENSUS_PROVENANCE.md.
+# Source SHA-256: 4bb086ef9b0ec1f6f5362df92d634a2b4d997b4b5037f213fd3d5e5ea219bba4

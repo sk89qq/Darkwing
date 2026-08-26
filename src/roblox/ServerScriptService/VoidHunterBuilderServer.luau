@@ -3,6 +3,10 @@
 
 	Canonical blueprint persistence and physical ship construction boundary.
 	All physical structural mutations route through StructuralAuthority.
+
+	V2 blueprint reconstruction is delegated to BlueprintLoader. Legacy stored
+	blueprints remain readable through normalizeBlueprint until migrated, but no
+	new direct topology construction is performed for V2 data.
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,6 +16,8 @@ local Players = game:GetService("Players")
 local builderEvent = ReplicatedStorage:WaitForChild("VoidHunterBuilder")
 local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"))
 local StructuralAuthority = require(ReplicatedStorage.Shared.Ship:WaitForChild("StructuralAuthority"))
+local BlueprintSerializer = require(ReplicatedStorage.Shared.Ship:WaitForChild("BlueprintSerializer"))
+local BlueprintLoader = require(ReplicatedStorage.Shared.Ship:WaitForChild("BlueprintLoader"))
 
 local store
 local ok, err = pcall(function()
@@ -87,95 +93,12 @@ local function captureShip(ship: Model)
 		error("No authoritative ship core")
 	end
 
-	local parts = {}
-	for _, part in ipairs(ship:GetDescendants()) do
-		if part:IsA("BasePart") and not part:IsA("VehicleSeat") and not part:GetAttribute("IsDebris") then
-			local typeName = resolveType(part)
-			if typeName then
-				local relative = primary.CFrame:ToObjectSpace(part.CFrame)
-				table.insert(parts, {
-					partType = typeName,
-					transform = cframeToData(relative),
-					name = part.Name,
-					NodeId = part:GetAttribute("NodeId"),
-					ComponentId = part:GetAttribute("ComponentId"),
-					ParentNodeId = part:GetAttribute("ParentNodeId"),
-					ParentSocketId = part:GetAttribute("ParentSocketId"),
-					ConnectedSocketId = part:GetAttribute("ConnectedSocketId"),
-				})
-			end
-		end
+	local captured = BlueprintSerializer.Capture(ship)
+	if not captured then
+		error("BlueprintSerializer capture failed")
 	end
 
-	return {
-		version = BLUEPRINT_VERSION,
-		name = ship.Name .. "_BP",
-		rootType = resolveType(primary),
-		parts = parts,
-	}
-end
-
-local function normalizeBlueprint(raw: any): any?
-	if type(raw) ~= "table" then
-		return nil
-	end
-
-	if raw.version == BLUEPRINT_VERSION and type(raw.parts) == "table" then
-		return raw
-	end
-
-	if type(raw.parts) == "table" then
-		local migrated = {
-			version = BLUEPRINT_VERSION,
-			name = raw.name or "Ship_BP",
-			rootType = raw.rootType,
-			parts = {},
-		}
-		for _, entry in ipairs(raw.parts) do
-			if type(entry) == "table" and type(entry.partType) == "string" then
-				local transform = entry.transform
-				if not transform and typeof(entry.cframe) == "CFrame" then
-					transform = cframeToData(entry.cframe)
-				end
-				if transform then
-					table.insert(migrated.parts, {
-						partType = entry.partType,
-						transform = transform,
-						name = entry.name,
-						NodeId = entry.NodeId,
-						ComponentId = entry.ComponentId,
-						ParentNodeId = entry.ParentNodeId,
-						ParentSocketId = entry.ParentSocketId,
-						ConnectedSocketId = entry.ConnectedSocketId,
-					})
-				end
-			end
-		end
-		return migrated
-	end
-
-	if type(raw.Components) == "table" then
-		local migrated = {
-			version = BLUEPRINT_VERSION,
-			name = raw.Name or "Ship_BP",
-			rootType = nil,
-			parts = {},
-		}
-		for _, component in ipairs(raw.Components) do
-			if type(component) == "table" and type(component.Type) == "string" and type(component.Pos) == "table" then
-				local rot = type(component.Rot) == "table" and component.Rot or { X = 0, Y = 0, Z = 0 }
-				local cf = CFrame.new(component.Pos.X or 0, component.Pos.Y or 0, component.Pos.Z or 0)
-					* CFrame.Angles(math.rad(rot.X or 0), math.rad(rot.Y or 0), math.rad(rot.Z or 0))
-				table.insert(migrated.parts, {
-					partType = component.Type,
-					transform = cframeToData(cf),
-				})
-			end
-		end
-		return migrated
-	end
-
-	return nil
+	return captured
 end
 
 local function saveBlueprintInternal(player: Player, ship: Model)
@@ -192,8 +115,9 @@ local function saveBlueprintInternal(player: Player, ship: Model)
 		return false, "Capture failed"
 	end
 
+	local encoded = BlueprintSerializer.Encode(blueprint)
 	local saveOk, saveErr = pcall(function()
-		store:SetAsync("bp_" .. player.UserId, blueprint)
+		store:SetAsync("bp_" .. player.UserId, encoded)
 	end)
 	if not saveOk then
 		warn("Blueprint save failed: " .. tostring(saveErr))
@@ -212,11 +136,66 @@ function BuilderServer.SaveBlueprint(player: Player, ship: Model)
 	return saveBlueprintInternal(player, ship)
 end
 
-function BuilderServer.GetBlueprint(player: Player)
-	local okGet, data = pcall(function()
+local function normalizeLegacyBlueprint(raw: any): BlueprintSerializer.Blueprint?
+	if type(raw) ~= "table" then
+		return nil
+	end
+
+	if raw.Version == BLUEPRINT_VERSION and type(raw.Components) == "table" then
+		return raw :: BlueprintSerializer.Blueprint
+	end
+
+	if type(raw.parts) == "table" then
+		local components = {}
+		local rootComponentId: string? = nil
+		local previousId: string? = nil
+		for index, entry in ipairs(raw.parts) do
+			if type(entry) == "table" and type(entry.partType) == "string" then
+				local transform = entry.transform
+				if transform and dataToCFrame(transform) then
+					local id = typeof(entry.ComponentId) == "string" and entry.ComponentId or ("legacy_" .. tostring(index))
+					components[#components + 1] = {
+						Id = id,
+						ComponentType = entry.partType,
+						ParentId = previousId,
+						ParentHardpointId = entry.ParentSocketId,
+						ChildHardpointId = entry.ConnectedSocketId,
+						Position = { x = transform.px, y = transform.pz },
+						Angle = -(transform.ry or 0),
+					}
+					rootComponentId = rootComponentId or id
+					previousId = id
+				end
+			end
+		end
+		if rootComponentId and #components > 0 then
+			return {
+				Version = BLUEPRINT_VERSION,
+				RootComponentId = rootComponentId,
+				Components = components,
+			}
+		end
+	end
+
+	return nil
+end
+
+function BuilderServer.GetBlueprint(player: Player): BlueprintSerializer.Blueprint?
+	local okGet, encoded = pcall(function()
 		return store:GetAsync("bp_" .. player.UserId)
 	end)
-	return okGet and normalizeBlueprint(data) or nil
+	if not okGet then
+		return nil
+	end
+
+	if typeof(encoded) == "string" then
+		local decoded = BlueprintSerializer.Decode(encoded)
+		if decoded then
+			return decoded
+		end
+	end
+
+	return normalizeLegacyBlueprint(encoded)
 end
 
 local function getNearbyDebris(componentName: string, origin: Vector3, maxDistance: number): BasePart?
@@ -256,27 +235,19 @@ local function autoBuild(player: Player, ship: Model)
 		return
 	end
 
-	for _, entry in ipairs(blueprint.parts) do
+	for _, entry in ipairs(blueprint.Components) do
 		if not autoActive[player] or not ship.Parent then
 			break
 		end
 
-		if not Components.Types[entry.partType] or not Components.Connections[entry.partType] then
-			continue
-		end
-
-		local targetCF = dataToCFrame(entry.transform)
-		if not targetCF then
-			continue
-		end
-
-		local debris = getNearbyDebris(entry.partType, primary.Position, 45)
+		local debris = getNearbyDebris(entry.ComponentType, primary.Position, 45)
 		if not debris then
 			continue
 		end
 
-		debris.CFrame = primary.CFrame:ToWorldSpace(targetCF)
-		local _, attachError = StructuralAuthority.AttachComponent(ship, debris, entry.partType, 6)
+		local localCFrame = CFrame.new(entry.Position.x, 0, entry.Position.y) * CFrame.Angles(0, -entry.Angle, 0)
+		debris.CFrame = primary.CFrame:ToWorldSpace(localCFrame)
+		local _, attachError = StructuralAuthority.AttachComponent(ship, debris, entry.ComponentType, Components.SNAP_DISTANCE or 5)
 		if attachError then
 			debris:SetAttribute("IsDebris", true)
 		end
@@ -308,48 +279,36 @@ builderEvent.OnServerEvent:Connect(function(player: Player, action: string, ship
 			StructuralAuthority.DetachComponent(ship, part, "ManualDetach")
 		end
 	elseif action == "weld" then
-		-- Legacy action name retained for network compatibility. No direct weld
-		-- mutation is performed here; canonical structural binding is used instead.
 		StructuralAuthority.BindShip(ship)
 	end
 end)
 
-function BuilderServer.BuildShipFromBlueprint(blueprint: any)
-	local normalized = normalizeBlueprint(blueprint)
+function BuilderServer.BuildShipFromBlueprint(blueprint: any): Model?
+	local normalized = blueprint
+	if not (type(normalized) == "table" and normalized.Version == BLUEPRINT_VERSION and type(normalized.Components) == "table") then
+		normalized = normalizeLegacyBlueprint(blueprint)
+	end
 	if not normalized then
 		warn("Invalid blueprint provided")
 		return nil
 	end
 
 	local ship = Instance.new("Model")
-	ship.Name = normalized.name or "Ship"
+	ship.Name = "Ship"
 	ship:SetAttribute("IsShip", true)
 
-	local primaryPart: BasePart? = nil
-	for _, component in ipairs(normalized.parts) do
-		local result = Components.Create(component.partType)
-		local transform = dataToCFrame(component.transform)
-		if result and result.part and transform and Components.Types[component.partType] and Components.Connections[component.partType] then
-			local part = result.part
-			part.CFrame = transform
-			part.Parent = ship
-			part:SetAttribute("ComponentType", component.partType)
-			part:SetAttribute("NodeId", component.NodeId)
-			part:SetAttribute("ComponentId", component.ComponentId)
-			part:SetAttribute("ParentNodeId", component.ParentNodeId)
-			part:SetAttribute("ParentSocketId", component.ParentSocketId)
-			part:SetAttribute("ConnectedSocketId", component.ConnectedSocketId)
-			if Components.Types[component.partType].IsCore == true then
-				part:SetAttribute("IsCore", true)
-			end
-			primaryPart = primaryPart or part
-		end
+	local factory = function(componentType: string, _logicalId: string): BasePart?
+		local created = Components.Create(componentType)
+		return created and created.part or nil
 	end
 
-	if primaryPart then
-		ship.PrimaryPart = primaryPart
-		StructuralAuthority.BindShip(ship)
+	local loaded, loadError = BlueprintLoader.Load(ship, normalized :: BlueprintSerializer.Blueprint, factory)
+	if not loaded then
+		ship:Destroy()
+		warn("Blueprint construction failed: " .. tostring(loadError))
+		return nil
 	end
+
 	return ship
 end
 

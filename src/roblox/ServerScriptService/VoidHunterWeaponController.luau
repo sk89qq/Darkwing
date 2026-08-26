@@ -674,10 +674,15 @@ RunService.Heartbeat:Connect(function(dt)
 	ballistics:Step(dt, function(projectile, targetBody, hitPosition)
 		local victimShip = targetBody and targetBody.RobloxModel
 		if not victimShip then return end
-		local parts = getComponentParts(victimShip)
-		if #parts == 0 then return end
-		local hitPart = parts[math.random(1, #parts)]
-		applyDamage(hitPart, projectile.BaseDamage, projectile.DamageType, nil, hitPosition)
+		local hitPart = targetBody.RobloxPart
+		if not hitPart or not hitPart:IsDescendantOf(victimShip) then return end
+		if not ComponentAuthority.IsComponent(hitPart) then
+			local ancestorPart = hitPart:FindFirstAncestorWhichIsA("BasePart")
+			hitPart = ancestorPart or hitPart
+		end
+		if ComponentAuthority.IsComponent(hitPart) then
+			applyDamage(hitPart, projectile.BaseDamage, projectile.DamageType, nil, hitPosition)
+		end
 	end)
 
 	for _, ship in pairs(ShipRegistry.GetAll()) do

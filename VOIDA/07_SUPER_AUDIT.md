@@ -46,9 +46,14 @@ Do not add subsystem-local authoritative copies.
 - `StructuralAuthority.ReplaceComponent` validates the replacement definition and preserved parent hardpoint before detaching the existing component, then attaches to that exact socket.
 - `BodyRecomputeService` is the single post-mutation recompute boundary for rigid-body mass properties.
 - `StructuralAuthority` rebuilds rigid-body mass points from canonical component mass precedence and recomputes body mass/COM/inertia/bounds after structural mutations.
+- `StructuralAuthority.RunTransaction()` snapshots structural membership, topology attributes, parentage, transforms, and assembly kinematics and restores them when a transaction fails or throws.
 - Blueprint persistence and construction are consolidated into `VoidHunterBuilderServer`; the old blueprint system is now a compatibility facade with no independent datastore/schema.
 - `BlueprintSerializer` now uses Version 2 with explicit stable logical component IDs, separate from hardpoint/socket IDs.
-- `BlueprintLoader` validates component definitions, references, root uniqueness, and dependency cycles before reconstruction and resolves parent references through blueprint IDs.
+- `BlueprintLoader` validates component definitions, references, root uniqueness, dependency cycles, and staged hardpoint assignments before reconstruction.
+- `BlueprintLoader` performs live structural commit inside `StructuralAuthority.RunTransaction()`.
+- `BlueprintSerializer.FindRoot()` resolves the persisted `BlueprintId` attribute rather than comparing persisted logical IDs against runtime `ComponentId` values.
+- `VoidHunterBuilderServer.BuildShipFromBlueprint()` delegates V2 reconstruction to `BlueprintLoader` rather than directly mutating persisted topology attributes.
+- Legacy stored blueprint normalization remains only as a migration compatibility path.
 - Builder placement routes through `StructuralAuthority`; the old direct blueprint mutation/adjacency authority was removed.
 - Shield identity/configuration now derives from explicit `ComponentType` + `Components.Types` definitions, with no shield-generator name scan.
 - Capacitor configuration now derives from explicit component definition fields, with no Reactor/Capacitor/Battery name scan.
@@ -77,7 +82,7 @@ Do not add subsystem-local authoritative copies.
 - Roblox API hygiene sweep found no indexed `BodyVelocity`, `wait(`, `delay(`, or `tick(` legacy usage.
 - `NativeDebrisPhysics` preserves the recovered native debris-launch equation structure without inventing unresolved caller scale.
 - Grapple lifecycle infrastructure exists as a Roblox-native state machine boundary; unresolved native constants/target-eligibility semantics remain isolated rather than guessed.
-- `VOIDA/00_SOURCE_INDEX.md` now indexes the numbered VOIDA source/audit corpus and establishes its navigation/authority rules.
+- `VOIDA/00_SOURCE_INDEX.md` indexes the numbered VOIDA source/audit corpus and establishes its navigation/authority rules.
 
 ## Raw-source corrections from this pass
 1. `wlb.java` directly initializes `hab.g` as 56 component-definition slots.
@@ -88,7 +93,7 @@ Do not add subsystem-local authoritative copies.
 6. Raw `nbb` debris transfer behavior has now been directly recovered: the debris specialization receives native transient motion quantities from its source body and clears those source accumulators. The Roblox port mirrors the recovered inherited kinematic state through `RigidBody2D`.
 7. The raw `ml.DA` debris path also applies a separate launch term after state inheritance. Its geometric/random structure is recovered; caller-specific scale remains isolated until the source context is fully mapped.
 8. `nbb.e(false)` resolves to inherited `anb.s`, the native body-mass field.
-9. Blueprint component identity is now explicitly persisted as `BlueprintComponent.Id`; hardpoint IDs remain separate fields and are never used as component identity.
+9. Blueprint component identity is explicitly persisted as `BlueprintComponent.Id`; hardpoint IDs remain separate and runtime `ComponentId` values are never substituted for persistence identity.
 
 ## Remaining P0
 1. **BLOCKED:** recover the exact source caller mapping for the `ml.DA` launch scalar `n2` in every destruction context. Do not map it to damage/HP/mass/force by inference.
@@ -97,7 +102,7 @@ Do not add subsystem-local authoritative copies.
 4. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
 5. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.
 6. Prove all externally referenced compatibility facades have no remaining live callers, then delete `VoidHunterBlueprintSystem` and `VoidHunterSyncManager` rather than retaining unnecessary compatibility surface.
-7. **PARTIAL:** `BlueprintLoader` validates and stages a complete dependency-ordered blueprint but still needs an atomic `StructuralAuthority` transaction/rollback primitive before it can truthfully claim full topology rollback on mid-commit failure.
+7. **IMPLEMENTED / PARTIAL:** Blueprint V2 validation, staging, transactional structural commit, and builder integration are complete at source level. Roblox Studio acceptance and legacy datastore migration remain pending.
 8. **PARTIAL:** grapple constants and exact target-eligibility behavior are known by parameter name/state strings but not fully backed by recovered method bodies in the currently indexed raw corpus.
 
 ## Mission/network lookahead status

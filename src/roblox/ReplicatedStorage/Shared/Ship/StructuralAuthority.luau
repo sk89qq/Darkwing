@@ -8,8 +8,8 @@
 
 	Physics boundary:
 	- Logical graph mutation remains authoritative.
+	- BodyRecomputeService is the single post-mutation recompute boundary.
 	- Detached assemblies inherit rigid-body point kinematics from the source ship.
-	- No arbitrary detachment impulse is introduced here.
 	- Native debris launch terms remain a separate forensic mapping until their
 	  source constants and call context are completely recovered.
 ]=]
@@ -21,6 +21,7 @@ local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"
 local ShipSocketGraph = require(ReplicatedStorage.Shared:WaitForChild("ShipSocketGraph"))
 local ComponentAuthority = require(ReplicatedStorage.Shared.Combat:WaitForChild("ComponentAuthority"))
 local RigidBody2D = require(ReplicatedStorage.Shared.Physics:WaitForChild("RigidBody2D"))
+local BodyRecomputeService = require(ReplicatedStorage.Shared.Physics:WaitForChild("BodyRecomputeService"))
 
 local StructuralAuthority = {}
 StructuralAuthority.__index = StructuralAuthority
@@ -130,6 +131,16 @@ local function createSourceRigidBody(ship: Model): any?
 	return body
 end
 
+local function recomputeShipBody(ship: Model): any?
+	local body = createSourceRigidBody(ship)
+	if not body then
+		return nil
+	end
+	return BodyRecomputeService.Recompute(body)
+		and body
+		or body
+end
+
 function StructuralAuthority.BuildGraph(ship: Model): any
 	assert(ship and ship:IsA("Model"), "StructuralAuthority.BuildGraph expects a ship Model")
 	return ShipSocketGraph.new(ship)
@@ -137,7 +148,9 @@ end
 
 function StructuralAuthority.BindShip(ship: Model)
 	ComponentAuthority.BindShip(ship)
-	return StructuralAuthority.BuildGraph(ship)
+	local graph = StructuralAuthority.BuildGraph(ship)
+	recomputeShipBody(ship)
+	return graph
 end
 
 function StructuralAuthority.AttachComponent(ship: Model, part: BasePart, componentType: string, maxSnapDistance: number?): (any?, string?)
@@ -162,6 +175,7 @@ function StructuralAuthority.AttachComponent(ship: Model, part: BasePart, compon
 
 	ComponentAuthority.Bind(part, componentType)
 	ComponentAuthority.SetParent(part, candidate.ParentNode.Part)
+	recomputeShipBody(ship)
 	return childNode, nil
 end
 
@@ -198,7 +212,6 @@ function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason
 	end
 
 	local sourceBody = createSourceRigidBody(ship)
-
 	disconnectExternalWelds(parts)
 
 	local debrisAssembly = Instance.new("Model")
@@ -235,6 +248,11 @@ function StructuralAuthority.DetachComponent(ship: Model, part: BasePart, reason
 		detachedPart.AssemblyLinearVelocity = inheritedVelocity
 		detachedPart.AssemblyAngularVelocity = inheritedAngularVelocity
 	end
+
+	for _, detachedPart in ipairs(parts) do
+		ComponentAuthority.Clear(detachedPart)
+	end
+	recomputeShipBody(ship)
 
 	return debrisAssembly
 end
@@ -283,6 +301,7 @@ function StructuralAuthority.SeverDisconnected(ship: Model): { Model }
 		end
 	end
 
+	recomputeShipBody(ship)
 	return detached
 end
 
@@ -351,6 +370,7 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 				restoredRoot:SetAttribute(attributeName, attributeValue)
 			end
 		end
+		recomputeShipBody(ship)
 		return detached, false
 	end
 
@@ -359,6 +379,7 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 	if childNode then
 		ComponentAuthority.Bind(newPart, componentType)
 		ComponentAuthority.SetParent(newPart, replacementParent.Part)
+		recomputeShipBody(ship)
 		return detached, true
 	end
 
@@ -373,9 +394,12 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		for attributeName, attributeValue in pairs(oldAttributes) do
 			restoredRoot:SetAttribute(attributeName, attributeValue)
 		end
-		ComponentAuthority.Bind(restoredRoot, oldAttributes.ComponentType :: string?)
+		if typeof(oldAttributes.ComponentType) == "string" then
+			ComponentAuthority.Bind(restoredRoot, oldAttributes.ComponentType)
+		end
 	end
 
+	recomputeShipBody(ship)
 	return detached, false
 end
 

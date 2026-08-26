@@ -6,58 +6,98 @@
 	Behavioral goals:
 	  - True 2D planar projectile integration with ship velocity inheritance
 	  - Swept segment collision checks to prevent tunneling
-	  - Momentum-style impulse delivery to hit bodies when the physics body
-	    exposes the authoritative impulse API
+	  - Nearest-hit selection along the projectile segment
+	  - Roblox Workspace raycast fallback when no logical PhysicsWorld is attached
+	  - Momentum-style impulse delivery to hit logical bodies when supported
 	  - Homing missile guidance with bounded angular turn rate
 	  - Deterministic projectile lifetime/range cleanup
 ]]
 
 local PhysicsConfig = require(game.ReplicatedStorage.Shared.Physics.PhysicsConfig)
 local CombatTypes = require(game.ReplicatedStorage.Shared.Combat.CombatTypes)
+local Workspace = game:GetService("Workspace")
 
 local BallisticsEngine = {}
 BallisticsEngine.__index = BallisticsEngine
 
-local function distancePointToSegment(point: Vector2, startPoint: Vector2, endPoint: Vector2): number
+local function distancePointToSegment(point: Vector2, startPoint: Vector2, endPoint: Vector2): (number, number)
 	local segment = endPoint - startPoint
 	local lengthSq = segment.MagnitudeSq
 	if lengthSq <= 0.000001 then
-		return (point - startPoint).Magnitude
+		return (point - startPoint).Magnitude, 0
 	end
 
 	local t = math.clamp((point - startPoint):Dot(segment) / lengthSq, 0, 1)
 	local closest = startPoint + segment * t
-	return (point - closest).Magnitude
+	return (point - closest).Magnitude, t
 end
 
 local function findSegmentBodyHit(startPoint: Vector2, endPoint: Vector2, bodies: { any }, shooterId: string): (any?, Vector2?)
 	local bestBody: any = nil
-	local bestDistance = math.huge
+	local bestHit: Vector2? = nil
+	local bestTravel = math.huge
 	local segmentLength = (endPoint - startPoint).Magnitude
 
 	for _, body in ipairs(bodies) do
 		if body.Id ~= shooterId and body.IsActive then
 			local radius = body.BoundingRadius or 6.0
-			local distanceToSegment = distancePointToSegment(body.Position, startPoint, endPoint)
+			local distanceToSegment, segmentT = distancePointToSegment(body.Position, startPoint, endPoint)
 			if distanceToSegment <= radius then
-				local travelDistance = (body.Position - startPoint).Magnitude
-				if travelDistance <= segmentLength + radius and travelDistance < bestDistance then
-					bestDistance = travelDistance
+				local candidateTravel = segmentLength * segmentT
+				if candidateTravel < bestTravel then
 					local direction = endPoint - startPoint
 					local directionUnit = direction.Magnitude > 0 and direction.Unit or Vector2.yAxis
-					local hitPoint = body.Position - directionUnit * math.min(radius, travelDistance)
+					local hitOffset = math.sqrt(math.max(radius * radius - distanceToSegment * distanceToSegment, 0))
+					local hitT = math.clamp(segmentT - hitOffset / math.max(segmentLength, 0.000001), 0, 1)
+					bestTravel = candidateTravel
 					bestBody = body
-					bestDistance = travelDistance
-					if hitPoint ~= hitPoint then
-						hitPoint = startPoint
-					end
-					return bestBody, hitPoint
+					bestHit = startPoint + direction * hitT
 				end
 			end
 		end
 	end
 
-	return bestBody, nil
+	return bestBody, bestHit
+end
+
+local function findRobloxRaycastHit(startPoint: Vector2, endPoint: Vector2, shooterId: string): (any?, Vector2?)
+	local origin = Vector3.new(startPoint.X, PhysicsConfig.FIXED_Y_ELEVATION, startPoint.Y)
+	local destination = Vector3.new(endPoint.X, PhysicsConfig.FIXED_Y_ELEVATION, endPoint.Y)
+	local direction = destination - origin
+	if direction.Magnitude <= 0.000001 then
+		return nil, nil
+	end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.IgnoreWater = true
+
+	local ignore: { Instance } = {}
+	for _, instance in ipairs(Workspace:GetChildren()) do
+		if instance:IsA("Model") and instance:GetAttribute("ShipId") == shooterId then
+			ignore[#ignore + 1] = instance
+		end
+	end
+	params.FilterDescendantsInstances = ignore
+
+	local result = Workspace:Raycast(origin, direction, params)
+	if not result then
+		return nil, nil
+	end
+
+	local hitModel = result.Instance:FindFirstAncestorOfClass("Model")
+	if not hitModel or hitModel:GetAttribute("IsShip") ~= true then
+		return nil, nil
+	end
+
+	local body = {
+		Id = hitModel:GetAttribute("ShipId") or hitModel.Name,
+		IsActive = true,
+		BoundingRadius = 0,
+		Position = Vector2.new(hitModel:GetPivot().Position.X, hitModel:GetPivot().Position.Z),
+		RobloxModel = hitModel,
+	}
+	return body, Vector2.new(result.Position.X, result.Position.Z)
 end
 
 function BallisticsEngine.new(physicsWorld: any?)
@@ -160,14 +200,17 @@ function BallisticsEngine:Step(dt: number, onHitCallback: ((CombatTypes.Projecti
 		local hitPosition = nextPos
 		if self.PhysicsWorld and self.PhysicsWorld.BodyList then
 			hitBody, hitPosition = findSegmentBodyHit(startPos, nextPos, self.PhysicsWorld.BodyList, proj.ShooterId)
-			if hitBody then
-				hitOccurred = true
-				if hitBody.ApplyImpulseAtWorldPoint then
-					hitBody:ApplyImpulseAtWorldPoint(proj.Velocity.Unit * proj.ImpulseMagnitude, hitPosition)
-				end
-				if onHitCallback then
-					onHitCallback(proj, hitBody, hitPosition)
-				end
+		else
+			hitBody, hitPosition = findRobloxRaycastHit(startPos, nextPos, proj.ShooterId)
+		end
+
+		if hitBody and hitPosition then
+			hitOccurred = true
+			if hitBody.ApplyImpulseAtWorldPoint then
+				hitBody:ApplyImpulseAtWorldPoint(proj.Velocity.Unit * proj.ImpulseMagnitude, hitPosition)
+			end
+			if onHitCallback then
+				onHitCallback(proj, hitBody, hitPosition)
 			end
 		end
 

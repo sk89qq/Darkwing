@@ -2,13 +2,14 @@
 	ComponentAuthority
 	Canonical runtime state for Void Hunters components.
 
-	The Lua state is authoritative; Instance Attributes are diagnostic/persistence
-	mirrors. Structural mutations are handled by StructuralAuthority.
+	Lua state is authoritative; Instance Attributes are diagnostic/persistence mirrors.
+	Structural mutations are handled by StructuralAuthority.
 
 	15% critical presentation threshold is user-observed and remains isolated until
 	the original render/update method is recovered and code-verified.
 ]=]
 
+local HttpService = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"))
 
@@ -29,6 +30,7 @@ export type ComponentState = {
 	FinalY: number,
 	FinalAngle: number,
 	ParentId: string?,
+	ParentPart: BasePart?,
 	Children: { [string]: string },
 	Destroyed: boolean,
 	Critical: boolean,
@@ -37,11 +39,9 @@ export type ComponentState = {
 }
 
 local states: { [BasePart]: ComponentState } = setmetatable({}, { __mode = "k" })
-local nextId = 0
 
-local function newId(part: BasePart): string
-	nextId += 1
-	return string.format("component_%s_%d", part:GetDebugId(), nextId)
+local function newId(): string
+	return "component_" .. HttpService:GenerateGUID(false)
 end
 
 local function findDefinition(part: BasePart): (string?, any?)
@@ -93,7 +93,7 @@ function ComponentAuthority.Bind(part: BasePart, explicitTypeName: string?): Com
 	local existingBaseColor = part:GetAttribute("BaseColor")
 	local baseColor = typeof(existingBaseColor) == "Color3" and existingBaseColor or part.Color
 	local state: ComponentState = {
-		Id = part:GetAttribute("ComponentId") or newId(part),
+		Id = part:GetAttribute("ComponentId") or newId(),
 		TypeName = typeName,
 		TypeId = tostring(definition.TypeId or definition.Id or typeName),
 		Health = maxHealth,
@@ -106,6 +106,7 @@ function ComponentAuthority.Bind(part: BasePart, explicitTypeName: string?): Com
 		FinalY = 0,
 		FinalAngle = 0,
 		ParentId = nil,
+		ParentPart = nil,
 		Children = {},
 		Destroyed = false,
 		Critical = false,
@@ -169,7 +170,9 @@ end
 function ComponentAuthority.ApplyDamage(part: BasePart, damage: number): (ComponentState?, boolean)
 	local state = states[part] or ComponentAuthority.Bind(part)
 	if not state or state.Destroyed then return state, false end
-	if typeof(damage) ~= "number" or damage <= 0 then return state, false end
+	if typeof(damage) ~= "number" or damage <= 0 or damage ~= damage or damage == math.huge or damage == -math.huge then
+		return state, false
+	end
 
 	state.Health = math.max(0, state.Health - damage)
 	local destroyed = state.Health <= 0
@@ -180,7 +183,7 @@ end
 
 function ComponentAuthority.Repair(part: BasePart, amount: number): (ComponentState?, number)
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state or typeof(amount) ~= "number" or amount <= 0 or state.Destroyed then
+	if not state or typeof(amount) ~= "number" or amount <= 0 or amount ~= amount or amount == math.huge or state.Destroyed then
 		return state, 0
 	end
 
@@ -203,20 +206,22 @@ function ComponentAuthority.SetParent(part: BasePart, parentPart: BasePart?): Co
 	local state = states[part] or ComponentAuthority.Bind(part)
 	if not state then return nil end
 
+	if state.ParentPart and state.ParentPart ~= parentPart then
+		local oldParent = states[state.ParentPart]
+		if oldParent then
+			oldParent.Children[state.Id] = nil
+		end
+	end
+
 	if parentPart then
 		local parentState = states[parentPart] or ComponentAuthority.Bind(parentPart)
-		if parentState then
-			-- Remove stale parent relationship before assigning the new one.
-			if state.ParentId and state.ParentId ~= parentState.Id then
-				for childId in pairs(parentState.Children) do
-					if childId == state.Id then parentState.Children[childId] = nil end
-				end
-			end
-			state.ParentId = parentState.Id
-			parentState.Children[state.Id] = state.Id
-		end
+		if not parentState then return nil end
+		state.ParentId = parentState.Id
+		state.ParentPart = parentPart
+		parentState.Children[state.Id] = state.Id
 	else
 		state.ParentId = nil
+		state.ParentPart = nil
 	end
 
 	part:SetAttribute("ParentComponentId", state.ParentId)
@@ -225,9 +230,13 @@ end
 
 function ComponentAuthority.Clear(part: BasePart)
 	local state = states[part]
-	if state and state.ParentId then
-		-- Parent state may have been garbage-collected; remove only local state here.
-		state.ParentId = nil
+	if not state then return end
+
+	if state.ParentPart then
+		local parentState = states[state.ParentPart]
+		if parentState then
+			parentState.Children[state.Id] = nil
+		end
 	end
 	states[part] = nil
 end

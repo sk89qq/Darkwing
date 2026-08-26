@@ -32,6 +32,7 @@ Do not add subsystem-local authoritative copies.
 - `ShipSocketGraph` requires explicit component definitions from `Components.Types` + `Components.Connections` before creating topology nodes or sockets.
 - `ShipSocketGraph` records explicit `ParentNodeId`, `ParentSocketId`, and `ConnectedSocketId` metadata during canonical attachment.
 - `ShipSocketGraph` uses explicit relationship metadata first; legacy weld/proximity reconstruction is limited to an import adapter and cannot create unknown components or sockets.
+- `StructuralAuthority.ReplaceComponent` now validates the replacement definition and preserved parent hardpoint before detaching the existing component, then attaches to that exact socket and rolls back on failure.
 - Spatial transient targeting remains query-based rather than workspace-descendant scanning.
 - `VOIDA/10_ROBLOX_LUAU_REFERENCE.md` is the standing implementation-style reference, subordinate to raw source semantics.
 
@@ -43,15 +44,14 @@ Do not add subsystem-local authoritative copies.
 5. Existing `ForensicDataModel` entries that were synthesized before the raw package was available must be treated as provisional unless they can be traced directly to raw source.
 
 ## Remaining P0
-1. Make structural replacement atomic: validate candidate hardpoint/connection before mutating the existing structure.
-2. Stop treating weld/proximity reconstruction as authoritative topology when explicit hardpoint metadata exists; complete caller migration to explicit relationship metadata.
-3. Consolidate blueprint persistence/build systems onto one authoritative implementation without inventing behavior.
-4. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
-5. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
-6. Replace remaining name/type heuristics in shield, power, repair, and combat systems with authoritative component definitions/data.
-7. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
-8. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
-9. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.
+1. Stop treating weld/proximity reconstruction as authoritative topology when explicit hardpoint metadata exists; complete caller migration to explicit relationship metadata.
+2. Consolidate blueprint persistence/build systems onto one authoritative implementation without inventing behavior.
+3. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
+4. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
+5. Replace remaining name/type heuristics in shield, power, repair, and combat systems with authoritative component definitions/data.
+6. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
+7. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
+8. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.
 
 ## Source-truth discipline
 The raw package is evidence. The implementation must preserve uncertainty where the decompilation is uncertain.

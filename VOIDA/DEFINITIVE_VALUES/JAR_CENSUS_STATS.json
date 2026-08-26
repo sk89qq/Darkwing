@@ -1,0 +1,22 @@
+{
+  "jar_bytes": 2325563,
+  "class_entries": 1570,
+  "nonclass_entries": 0,
+  "constant_pool_integer_literals": 4805,
+  "distinct_integer_literals": 3999,
+  "float_literals": 601,
+  "distinct_float_literals": 445,
+  "double_literals": 121,
+  "distinct_double_literals": 63,
+  "long_literals": 186,
+  "distinct_long_literals": 111,
+  "utf8_constants": 94161,
+  "distinct_utf8": 16853,
+  "relevant_strings": 1370,
+  "integer_min": -2147483648,
+  "integer_max": 2147483647,
+  "float_min": -100.0,
+  "float_max": 2147483648.0,
+  "double_min": -3.141592653589793,
+  "double_max": 16777216.0
+}

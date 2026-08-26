@@ -37,6 +37,15 @@ Do not add subsystem-local authoritative copies.
 - Blueprint persistence and construction are consolidated into `VoidHunterBuilderServer`; the old blueprint system is now a compatibility facade with no independent datastore/schema.
 - Builder placement routes through `StructuralAuthority`; the old direct blueprint mutation/adjacency authority was removed.
 - Sync blueprint persistence is superseded by `VoidHunterBuilderServer`; ship lifecycle lookup routes through `ShipRegistry`.
+- Shield identity/configuration now derives from explicit `ComponentType` + `Components.Types` definitions, with no shield-generator name scan.
+- Capacitor configuration now derives from explicit component definition fields, with no Reactor/Capacitor/Battery name scan.
+- PvP ship ownership now resolves through `ShipRegistry` rather than a private player->ship map.
+- PvP component identity now requires explicit `ComponentType` metadata.
+- PvP friendly/enemy decisions now use `TeamIdentity`.
+- PvP repair now calls `ComponentAuthority.Repair`.
+- PvP damage now calls `ComponentAuthority.ApplyDamage`.
+- PvP non-core destruction now routes through `StructuralAuthority.DetachComponent`.
+- PvP core destruction unregisters the ship from `ShipRegistry` before physical destruction.
 - Spatial transient targeting remains query-based rather than workspace-descendant scanning.
 - `VOIDA/10_ROBLOX_LUAU_REFERENCE.md` is the standing implementation-style reference, subordinate to raw source semantics.
 
@@ -50,11 +59,10 @@ Do not add subsystem-local authoritative copies.
 ## Remaining P0
 1. Recover exact source detach force, momentum carry-over, debris persistence, and cleanup behavior before adding policy.
 2. Recover exact `anb` physics equations/constants from raw source/bytecode before declaring Roblox physics parity.
-3. Replace remaining name/type heuristics in shield, power, repair, and combat systems with authoritative component definitions/data.
-4. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
-5. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
-6. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.
-7. Prove all externally referenced compatibility facades have no remaining live callers, then delete `VoidHunterBlueprintSystem` and `VoidHunterSyncManager` rather than retaining unnecessary compatibility surface.
+3. Port `MissionCondition` / `MissionAction` framework rather than expanding Arena-specific logic.
+4. Replace any static data-table values whose provenance cannot be traced to the raw package with `RAW-GAP` / `INFERRED` status rather than leaving them marked `CODE_VERIFIED`.
+5. Verify every live component definition whose `Components.Types` entry and `Components.Connections` entry diverge in connector counts before changing attachment semantics.
+6. Prove all externally referenced compatibility facades have no remaining live callers, then delete `VoidHunterBlueprintSystem` and `VoidHunterSyncManager` rather than retaining unnecessary compatibility surface.
 
 ## Source-truth discipline
 The raw package is evidence. The implementation must preserve uncertainty where the decompilation is uncertain.

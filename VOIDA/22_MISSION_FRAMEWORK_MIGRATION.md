@@ -6,6 +6,7 @@
 - `ef32740a0286697b09f07616c71b61d0265bde5c` — add canonical mission action service.
 - `01e58de92fea1ed258187978f205a5768bc0bbe9` / `68a40a78b6be544b494fa4f4357f536704f603dc` — add and correct canonical mission condition service.
 - `b8134487a41158f67cfd3132548c3cee1058eb0e` — add canonical mission runtime service.
+- `0da38723802400dad2831d76bb84a0d841fc5998` — route mission team action through `TeamIdentity.Set`.
 
 ## SOURCE:
 - Supplied Void Hunters reference identifies MissionBuilder, MissionControl, MissionState, MissionVariable, MissionEvent, and MissionGenerationData concepts.
@@ -29,7 +30,7 @@
 ## TEST:
 - Static API alignment checked against existing `ComponentAuthority` and `TeamIdentity` exports.
 - Mission condition implementation uses `ComponentAuthority.Get` rather than an invented accessor.
-- Mission action implementation uses the existing team vocabulary.
+- Mission action implementation uses `TeamIdentity.Set` rather than directly mutating team attributes.
 - Full Roblox Studio runtime acceptance has not been performed.
 
 ## STATUS:

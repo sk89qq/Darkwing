@@ -360,6 +360,8 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		return nil, false
 	end
 
+	-- Phase 1: validate the replacement against a temporary graph using the
+	-- old component's parent/socket relationship. No existing state is mutated.
 	local graph = StructuralAuthority.BuildGraph(ship)
 	local oldNodeId = oldPart:GetAttribute("NodeId")
 	local oldNode = oldNodeId and graph.Nodes[oldNodeId]
@@ -387,6 +389,15 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		return nil, false
 	end
 
+	local candidateCFrame = parentNode.Part.CFrame * CFrame.new(parentSocket.LocalOffset) * CFrame.new(-childSocket.LocalOffset)
+	if maxSnapDistance then
+		local distance = (candidateCFrame.Position - oldPart.Position).Magnitude
+		if distance > maxSnapDistance then
+			return nil, false
+		end
+	end
+
+	-- Phase 2: commit removal only after replacement validation succeeds.
 	local oldParentId = oldNode.ParentNodeId
 	local oldParentSocketId = oldNode.ParentSocketId
 	local oldCFrame = oldPart.CFrame

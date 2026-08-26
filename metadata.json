@@ -1,0 +1,6 @@
+{
+  "name": "Roblox Studio Autonomous Bridge",
+  "description": "Autonomous AI Game Architect and real-time bridge for Roblox Studio and Luau script generation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -10,7 +10,9 @@
 	shield behaviour/config consumers are traced.
 ]]
 
-local CombatTypes = require(game.ReplicatedStorage.Shared.Combat.CombatTypes)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"))
+local CombatTypes = require(ReplicatedStorage.Shared.Combat.CombatTypes)
 
 local ShieldSystem = {}
 ShieldSystem.__index = ShieldSystem
@@ -45,10 +47,7 @@ function ShieldSystem:CalculateFromShip(shipModel: Model)
 	for _, part in ipairs(shipModel:GetDescendants()) do
 		if part:IsA("BasePart") and not part:GetAttribute("IsDebris") then
 			local typeName = part:GetAttribute("ComponentType")
-			local definition = typeof(typeName) == "string"
-				and shipModel:IsDescendantOf(game)
-				and require(game.ReplicatedStorage:WaitForChild("VoidHunterComponents")).Types[typeName]
-				or nil
+			local definition = typeof(typeName) == "string" and Components.Types[typeName] or nil
 			if type(definition) == "table" then
 				local capacity = definition.ShieldCapacity
 				local regen = definition.ShieldRegen

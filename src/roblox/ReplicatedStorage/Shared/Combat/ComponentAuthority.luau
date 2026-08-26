@@ -57,12 +57,53 @@ local function findDefinition(part: BasePart): (string?, any?)
 end
 
 local function readHealth(definition: any): number
-	if type(definition) ~= "table" then return 0 end
+	if type(definition) ~= "table" then
+		return 0
+	end
+
 	local hp = definition.HP
-	if typeof(hp) == "number" and hp >= 0 then return hp end
+	if typeof(hp) == "number" and hp >= 0 then
+		return hp
+	end
+
 	local maxHp = definition.MaxHP
-	if typeof(maxHp) == "number" and maxHp >= 0 then return maxHp end
+	if typeof(maxHp) == "number" and maxHp >= 0 then
+		return maxHp
+	end
+
 	return 0
+end
+
+local function isInvalidParent(part: BasePart, parentPart: BasePart): boolean
+	if part == parentPart then
+		return true
+	end
+
+	local cursor = parentPart
+	local visited: { [BasePart]: boolean } = {}
+	while cursor do
+		if visited[cursor] then
+			return true
+		end
+		visited[cursor] = true
+
+		local state = states[cursor]
+		if not state then
+			break
+		end
+		if state.ParentPart == part then
+			return true
+		end
+		cursor = state.ParentPart
+	end
+
+	return false
+end
+
+local function removeChildReference(parentState: ComponentState, childState: ComponentState)
+	if parentState.Children[childState.Id] then
+		parentState.Children[childState.Id] = nil
+	end
 end
 
 function ComponentAuthority.Get(part: BasePart): ComponentState?
@@ -74,7 +115,9 @@ function ComponentAuthority.IsComponent(part: Instance): boolean
 end
 
 function ComponentAuthority.Bind(part: BasePart, explicitTypeName: string?): ComponentState?
-	if not part or not part:IsA("BasePart") then return nil end
+	if not part or not part:IsA("BasePart") then
+		return nil
+	end
 
 	local typeName = explicitTypeName
 	local definition
@@ -83,12 +126,16 @@ function ComponentAuthority.Bind(part: BasePart, explicitTypeName: string?): Com
 	else
 		typeName, definition = findDefinition(part)
 	end
+
 	if typeof(typeName) ~= "string" or type(typeName) ~= "string" or type(definition) ~= "table" then
 		return nil
 	end
 
 	local existing = states[part]
 	if existing then
+		if existing.TypeName ~= typeName then
+			return nil
+		end
 		return existing
 	end
 
@@ -132,7 +179,9 @@ function ComponentAuthority.BindShip(ship: Model): { [BasePart]: ComponentState 
 	for _, instance in ipairs(ship:GetDescendants()) do
 		if instance:IsA("BasePart") then
 			local state = ComponentAuthority.Bind(instance)
-			if state then bound[instance] = state end
+			if state then
+				bound[instance] = state
+			end
 		end
 	end
 	return bound
@@ -140,7 +189,9 @@ end
 
 local function updateVisual(state: ComponentState)
 	local part = state.BoundPart
-	if not part or not part.Parent then return end
+	if not part or not part.Parent then
+		return
+	end
 
 	local maxHealth = math.max(state.MaxHealth, 1)
 	local fraction = math.clamp(state.Health / maxHealth, 0, 1)
@@ -163,7 +214,13 @@ end
 
 function ComponentAuthority.SetHealth(part: BasePart, health: number): ComponentState?
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state then return nil end
+	if not state then
+		return nil
+	end
+	if typeof(health) ~= "number" or health ~= health or health == math.huge or health == -math.huge then
+		return nil
+	end
+
 	state.Health = math.clamp(health, 0, state.MaxHealth)
 	state.Destroyed = state.Health <= 0
 	updateVisual(state)
@@ -172,7 +229,9 @@ end
 
 function ComponentAuthority.ApplyDamage(part: BasePart, damage: number): (ComponentState?, boolean)
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state or state.Destroyed then return state, false end
+	if not state or state.Destroyed then
+		return state, false
+	end
 	if typeof(damage) ~= "number" or damage <= 0 or damage ~= damage or damage == math.huge or damage == -math.huge then
 		return state, false
 	end
@@ -198,7 +257,9 @@ end
 
 function ComponentAuthority.MarkDestroyed(part: BasePart): ComponentState?
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state then return nil end
+	if not state then
+		return nil
+	end
 	state.Health = 0
 	state.Destroyed = true
 	updateVisual(state)
@@ -207,22 +268,45 @@ end
 
 function ComponentAuthority.SetParent(part: BasePart, parentPart: BasePart?): ComponentState?
 	local state = states[part] or ComponentAuthority.Bind(part)
-	if not state then return nil end
-
-	if state.ParentPart and state.ParentPart ~= parentPart then
-		local oldParent = states[state.ParentPart]
-		if oldParent then
-			oldParent.Children[state.Id] = nil
-		end
+	if not state then
+		return nil
 	end
 
 	if parentPart then
+		if not parentPart:IsA("BasePart") then
+			return nil
+		end
+
 		local parentState = states[parentPart] or ComponentAuthority.Bind(parentPart)
-		if not parentState then return nil end
+		if not parentState or isInvalidParent(part, parentPart) then
+			return nil
+		end
+
+		if state.ParentPart == parentPart then
+			state.ParentId = parentState.Id
+			part:SetAttribute("ParentComponentId", state.ParentId)
+			parentState.Children[state.Id] = state.Id
+			return state
+		end
+
+		if state.ParentPart then
+			local oldParentState = states[state.ParentPart]
+			if oldParentState then
+				removeChildReference(oldParentState, state)
+			end
+		end
+
 		state.ParentId = parentState.Id
 		state.ParentPart = parentPart
 		parentState.Children[state.Id] = state.Id
 	else
+		if state.ParentPart then
+			local oldParentState = states[state.ParentPart]
+			if oldParentState then
+				removeChildReference(oldParentState, state)
+			end
+		end
+
 		state.ParentId = nil
 		state.ParentPart = nil
 	end
@@ -233,14 +317,24 @@ end
 
 function ComponentAuthority.Clear(part: BasePart)
 	local state = states[part]
-	if not state then return end
+	if not state then
+		return
+	end
 
 	if state.ParentPart then
 		local parentState = states[state.ParentPart]
 		if parentState then
-			parentState.Children[state.Id] = nil
+			removeChildReference(parentState, state)
 		end
 	end
+
+	for childId in pairs(state.Children) do
+		state.Children[childId] = nil
+	end
+
+	state.ParentPart = nil
+	state.ParentId = nil
+	part:SetAttribute("ParentComponentId", nil)
 	states[part] = nil
 end
 

@@ -33,6 +33,7 @@ Machine-searchable index for the numbered VOIDA forensic/source corpus. Use this
 - `09_AUTHORITY_CENSUS.md` — authority ownership map.
 - `10_ROBLOX_LUAU_REFERENCE.md` — Roblox/Luau implementation standards.
 - `11_RAW_RECONCILIATION.md` — raw-vs-implementation reconciliation.
+- `12_NATIVE_SEMANTIC_EXTRACTION_STATUS.md` — native semantic extraction boundary.
 - `12_WEAPON_AUTHORITY_MIGRATION.md` — weapon authority migration.
 - `13_COMPONENT_AUTHORITY_MIGRATION.md` — component state authority.
 - `13_SOCKET_GRAPH_AUTHORITY_MIGRATION.md` — socket/topology authority.
@@ -49,10 +50,14 @@ Machine-searchable index for the numbered VOIDA forensic/source corpus. Use this
 - `23_NETWORK_AUTHORITY_MIGRATION.md` — network authority.
 - `23_RESOURCE_AUTHORITY_MIGRATION.md` — resource authority.
 - `24_PROJECTILE_AUTHORITY_MIGRATION.md` — projectile authority.
+- `24_WEAPON_RESOURCE_AUTHORITY_MIGRATION.md` — weapon/resource authority.
 - `25_BALLISTICS_HIT_RESOLUTION_MIGRATION.md` — hit resolution.
+- `25_BODY_RECOMPUTE_MIGRATION.md` — body recompute boundary.
 - `26_BALLISTIC_WEAPON_MIGRATION.md` — ballistic weapon integration.
+- `26_COMPONENT_DEFINITION_VALIDATION.md` — component definition validation.
 - `27_PROJECTILE_HIT_AUTHORITY_HANDOFF.md` — hit authority handoff.
 - `28_HIT_RESOLUTION_HANDOFF.md` — hit resolution handoff.
+- `29_NATIVE_THRUSTER_OPERATOR_RECOVERY.md` — native `aqa` thruster force operator.
 - Later numbered files should be appended here in numeric order.
 
 ## Working rule

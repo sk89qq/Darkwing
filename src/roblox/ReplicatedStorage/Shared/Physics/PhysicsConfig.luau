@@ -4,18 +4,16 @@
 
 	SOURCE AUTHORITY:
 	The native defaults below are recovered from the exact user-supplied
-	voidhunters.jar census (`VOIDA/DEFINITIVE_VALUES/native_configuration_values.csv`).
-	They are retained in native units. They are NOT silently converted to Roblox
-	stud/second units here when the native consumer mapping is unresolved.
+	voidhunters.jar census and bytecode/operator recovery.
 
-	Roblox-facing solver values are kept separate and explicitly marked as
-	ROBLOX-MAPPING where native source semantics do not establish a direct unit
-	conversion. Do not label those values CODE_VERIFIED.
+	Native values remain separate from Roblox execution mappings. Native values
+	must NOT be blindly substituted for Roblox-unit values when the native
+	consumer/unit conversion is unresolved.
 ]]
 
 local PhysicsConfig = {
 	-- Native source defaults [SOURCE-VERIFIED]
-	-- Source: native_configuration_values.csv, indices 170-182.
+	-- Source: native_configuration_values.csv / native operator bytecode.
 	NATIVE_THRUSTER_FORCE = 192,
 	NATIVE_THRUSTER_BOOSTER_FORCE = 1024,
 	NATIVE_THRUSTER_SMALL_FORCE = 16,
@@ -33,6 +31,12 @@ local PhysicsConfig = {
 	NATIVE_DEBRIS_DETACHMENT_FORCE_MULTIPLIER = 256,
 	NATIVE_COMPONENT_BREAKING_EXPLOSION_FORCE_MULTIPLIER = 32768,
 
+	-- Native fixed-point/operator constants [BYTECODE-VERIFIED]
+	-- Recovered from the native operator chain used by anb force/torque update.
+	NATIVE_FORCE_POINT_SHIFT = 4,
+	NATIVE_TORQUE_POINT_SHIFT = 4,
+	NATIVE_ANGULAR_VELOCITY_DENOMINATOR_SHIFT = 12,
+
 	-- Simulation Rate [ROBLOX-MAPPING]
 	-- The native census establishes the operators/settings, but does not by
 	-- itself establish Roblox's scheduler unit conversion.
@@ -47,8 +51,8 @@ local PhysicsConfig = {
 	WORLD_WIDTH_UPSHIFT = 2500,
 
 	-- Kinematic Damping [ROBLOX-MAPPING]
-	-- Native fixed-point/downshift semantics are preserved above. These factors
-	-- remain execution mappings until the native anb update method is recovered.
+	-- These factors remain execution mappings until the complete native anb
+	-- update/unit conversion is recovered.
 	VELOCITY_SUSTAIN = 0.85,
 	VELOCITY_SUSTAIN_MAX = 0.98,
 	ANGULAR_VELOCITY_SUSTAIN = 0.70,

@@ -47,14 +47,14 @@ end
 
 export type TrigLookup = (angleUnits: number) -> number
 
--- Exact recovered `aqa` operator. The optional lookup arguments are retained
--- for test injection; normal callers should use the recovered native table.
+-- Exact recovered `aqa` operator. Optional lookup arguments are retained for
+-- deterministic tests; normal callers use the recovered native table.
 function NativeThrusterOperator.Compute(
 	componentType: number,
 	nativeMagnitude: number,
 	angleUnits: number,
-	sinLookup: TrigLookup?,
-	cosLookup: TrigLookup?
+	forceXLookup: TrigLookup?,
+	forceZLookup: TrigLookup?
 ): NativeThrusterForce
 	assert(type(componentType) == "number", "componentType must be numeric")
 	assert(type(nativeMagnitude) == "number", "nativeMagnitude must be numeric")
@@ -64,12 +64,12 @@ function NativeThrusterOperator.Compute(
 	local magnitude = bit32.arshift(forceScale * nativeMagnitude, FORCE_SHIFT)
 	local normalized = NativeThrusterOperator.NormalizeAngleUnits(angleUnits)
 
-	local sine = sinLookup or NativeTrigTable.GetSine
-	local cosine = cosLookup or NativeTrigTable.GetCosine
-	local sinValue = sine(normalized)
-	local cosValue = cosine(normalized)
-	local forceX = bit32.arshift(magnitude * sinValue, FORCE_SHIFT)
-	local forceZ = bit32.arshift(magnitude * cosValue, FORCE_SHIFT)
+	local xLookup = forceXLookup or NativeTrigTable.GetForceXComponent
+	local zLookup = forceZLookup or NativeTrigTable.GetForceZComponent
+	local xValue = xLookup(normalized)
+	local zValue = zLookup(normalized)
+	local forceX = bit32.arshift(magnitude * xValue, FORCE_SHIFT)
+	local forceZ = bit32.arshift(magnitude * zValue, FORCE_SHIFT)
 
 	local force = Vector2.new(forceX, forceZ)
 	local direction = if magnitude ~= 0 then force / magnitude else Vector2.zero

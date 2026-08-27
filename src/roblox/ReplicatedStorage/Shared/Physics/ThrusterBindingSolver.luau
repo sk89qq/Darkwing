@@ -9,10 +9,6 @@
 --   voidhunters_decompiled/fc.java
 --   voidhunters_decompiled/eu.java
 --   voidhunters_decompiled/rrb.java
---
--- RAW-STRUCTURED:
---   ml.VA() computes native-coordinate movement deltas, projects them onto
---   the current heading and heading-2048-units axes, then sets binding flags.
 
 local NativeTrigTable = require(script.Parent.NativeTrigTable)
 
@@ -42,12 +38,12 @@ function ThrusterBindingSolver.Compute(
 	local deltaX = bit32.arshift(targetPosition.X - currentPosition.X, 8)
 	local deltaZ = bit32.arshift(targetPosition.Y - currentPosition.Y, 8)
 
-	local forwardX = bit32.arshift(NativeTrigTable.GetSine(currentAngleUnits), 8)
-	local forwardZ = bit32.arshift(NativeTrigTable.GetCosine(currentAngleUnits), 8)
+	local forwardX = bit32.arshift(NativeTrigTable.GetForceXComponent(currentAngleUnits), 8)
+	local forwardZ = bit32.arshift(NativeTrigTable.GetForceZComponent(currentAngleUnits), 8)
 
 	local offsetAngle = currentAngleUnits + TURN_OFFSET_UNITS
-	local offsetX = bit32.arshift(NativeTrigTable.GetSine(offsetAngle), 8)
-	local offsetZ = bit32.arshift(NativeTrigTable.GetCosine(offsetAngle), 8)
+	local offsetX = bit32.arshift(NativeTrigTable.GetForceXComponent(offsetAngle), 8)
+	local offsetZ = bit32.arshift(NativeTrigTable.GetForceZComponent(offsetAngle), 8)
 
 	local forwardProjection = forwardX * deltaX + deltaZ * forwardZ
 	local turnProjection = deltaZ * offsetZ + offsetX * deltaX
@@ -58,7 +54,7 @@ function ThrusterBindingSolver.Compute(
 
 	local flags = 0
 
-	-- ml.VA(): n15 is the native vertical/longitudinal sign term.
+	-- ml.VA(): n15 is the native longitudinal sign term.
 	if deltaZ < 0 then
 		flags += 4
 	else

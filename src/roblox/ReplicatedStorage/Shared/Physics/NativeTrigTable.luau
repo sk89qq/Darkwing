@@ -19,23 +19,23 @@ local function maskAngle(angleUnits: number): number
 	return bit32.band(angleUnits, 0x1FFF)
 end
 
--- Exact fc.a() indexing/sign mapping.
-function NativeTrigTable.GetSine(angleUnits: number): number
+-- Exact fc.a() mapping used by aqa for the native X component.
+function NativeTrigTable.GetForceXComponent(angleUnits: number): number
 	local n = maskAngle(angleUnits)
 	if n < 4096 then
 		if n < 2048 then
-			return NativeTrigTable[n + 1]
+			return NativeTrigTable[2049 - n]
 		end
-		return -NativeTrigTable[4096 - n + 1]
+		return -NativeTrigTable[n - 2048 + 1]
 	end
 	if n >= 6144 then
-		return NativeTrigTable[n - 6144 + 1]
+		return -NativeTrigTable[n - 6144 + 1]
 	end
-	return -NativeTrigTable[6144 - n + 1]
+	return NativeTrigTable[8192 - n + 1]
 end
 
--- Exact eu.a() indexing/sign mapping.
-function NativeTrigTable.GetCosine(angleUnits: number): number
+-- Exact eu.a() mapping used by aqa for the native Z component.
+function NativeTrigTable.GetForceZComponent(angleUnits: number): number
 	local n = maskAngle(angleUnits)
 	if n < 4096 then
 		if n < 2048 then

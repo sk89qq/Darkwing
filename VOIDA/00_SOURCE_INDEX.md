@@ -6,7 +6,7 @@ Machine-searchable index for the numbered VOIDA forensic/source corpus. Use this
 
 ## Authority order
 
-1. `VOIDA/00_RAW_FORENSIC_REFERENCE.md` — source-of-truth rules and evidence classes.
+1. `VOIDA/00_RAW_FORENSIC_REFERENCE.md` — source-of-truth rules and evidence classes, raw class map.
 2. Numbered `VOIDA/*` forensic directives/reconciliations — subsystem evidence and migration history.
 3. Raw decompiled package referenced by the first-pass forensic reference.
 4. `src/roblox/*` — final Roblox implementation target.
@@ -58,6 +58,7 @@ Machine-searchable index for the numbered VOIDA forensic/source corpus. Use this
 - `27_PROJECTILE_HIT_AUTHORITY_HANDOFF.md` — hit authority handoff.
 - `28_HIT_RESOLUTION_HANDOFF.md` — hit resolution handoff.
 - `29_NATIVE_THRUSTER_OPERATOR_RECOVERY.md` — native `aqa` thruster force operator.
+- `30_NATIVE_THRUSTER_BINDING_RECOVERY.md` — native `ml.VA()` thruster binding classification.
 - Later numbered files should be appended here in numeric order.
 
 ## Working rule

@@ -1,117 +1,107 @@
 # VOIDA — JAR Bytecode Physics Verification
 
-**Date:** 2026-08-26
+**Date:** 2026-08-26  
 **Status:** EXTRACTED / CODE-VERIFIED / IMPLEMENTATION-PENDING
 
 ## SOURCE
-Exact uploaded `/mnt/data/voidhunters.jar` (3,939,214 bytes; 1,570 entries), inspected with JVM `javap -c -p` against the original obfuscated classes.
+Exact uploaded `voidhunters.jar`, inspected with JVM `javap -c -p` against the original obfuscated classes.
 
 Primary classes/methods:
 - `anb.e(byte)` — body mass / COM / inertia recomputation
-- `anb.a(int,int,int,byte,int)` — force/torque accumulator (`KB`)
-- `anb.b(int,int)` — accumulator consumption (`EA`)
+- `anb.a(int,int,int,byte,int)` — force/torque accumulator
+- `anb.b(int,int)` — accumulator consumption
 - `ml.e(byte)` — component-tree mass
-- `ml.a(byte,int[])` — component-tree mass-weighted position accumulation
+- `ml.a(byte,int[])` — mass-weighted position accumulation
 - `ml.a(int,int,int)` — polygon/component inertia accumulation
-- `ge.<clinit>` — fixed-point shift constant
-- `tua.<clinit>` — accumulator shift constant
-- `ou.<clinit>` — geometry coordinate shift constant
-- `wf.<clinit>` — angular conversion shift constant
+- `wfb.<init>(int[],int,int)` — component definition initialization
+- `wfb.a(boolean)` — native component mass derivation from polygon geometry
+- `ge.<clinit>`, `tua.<clinit>`, `ou.<clinit>`, `wf.<clinit>` — fixed-point constants
 
 ## VERIFIED NATIVE CONSTANTS
-Direct class initializers establish:
-
 - `ge.c = 4`
 - `tua.a = 4`
 - `ou.r = 8`
 - `wf.e = 12`
 
-These are now **CODE-VERIFIED**, not inferred.
+These are CODE-VERIFIED.
 
-## VERIFIED BODY RECOMPUTATION
-`anb.e(byte)` performs the following native sequence:
+## VERIFIED COMPONENT MASS DERIVATION
+Correction to the previous wording: `wfb.u` is **not an arbitrary pre-existing definition mass** in the constructor path inspected here.
 
-1. Preserve prior body reference position values.
-2. Recalculate component geometry/state.
-3. Read total component mass from `ml.e(-86)` into body field `s`.
-4. Accumulate mass-weighted component positions into a 3-element integer accumulator through `ml.a(114, int[])`.
-5. Divide the position accumulators by `max(totalMass, accumulator[2] >> 4)` and assign:
-   - body `i` = center-of-mass X
-   - body `j` = center-of-mass Y
-6. Rebase body position by the newly computed geometry center.
-7. Recalculate component transforms.
+`wfb.a(boolean)` initializes `u = 0`, then walks the polygon coordinate array `v` in `(x,y)` pairs. For each vertex it accumulates:
 
-`ml.e(-86)` starts from the component definition mass `wfb.u` and recursively adds every child component mass.
+`u += x_i * (y_prev - y_next)`
 
-`ml.a(byte,int[])` adds:
+then performs:
+
+`u /= 2`
+
+and clamps the result to a minimum of `1` and a maximum of `Integer.MAX_VALUE`.
+
+Thus the native component base mass `wfb.u` is derived from the signed polygon area (shoelace-style vertex accumulation), subject to the native integer/clamp behavior. The constructor then uses that derived `u` in the component's subsequent state initialization.
+
+This is a direct bytecode finding from `wfb.a(boolean)` and is more authoritative than the earlier decompiler-level description.
+
+## VERIFIED COMPONENT-TREE MASS
+`ml.e(-86)` starts from the component's `wfb.u` and recursively adds child component masses. Therefore body mass ultimately derives from the component polygon geometry and child hierarchy, not from a generic Roblox default mass.
+
+## VERIFIED COM
+`ml.a(byte,int[])` accumulates final component positions weighted by native component mass:
 - X contribution: `finalX * mass >> 4`
 - Y contribution: `finalY * mass >> 4`
 - total mass: `mass`
 then recursively processes descendants.
 
-Therefore the native COM operation is a fixed-point weighted centroid, with a verified right shift of **4** on coordinate*mass contributions.
+`anb.e(byte)` uses the resulting accumulator to establish body COM and rebases body state around the new geometry center.
 
-## VERIFIED COMPONENT INERTIA OPERATOR
-`ml.a(int,int,int)` computes a component's polygon inertia contribution from its `finaloutline` vertices.
+## VERIFIED COMPONENT INERTIA
+`ml.a(int,int,int)` computes polygon inertia from `finaloutline` vertices.
 
-Verified structure:
-- `pointMass = definitionMass / max(vertexCount, 1)`
-- vertex coordinates are shifted right by `ou.r = 8`
-- relative coordinates are measured from the supplied COM arguments
-- contribution accumulates `pointMass * (dx^2 + dy^2)`
-- child components recurse and their contributions are added
-- overflow is clamped to `Integer.MAX_VALUE`
+Verified:
+- `pointMass = componentMass / max(vertexCount, 1)`
+- vertex coordinates use `ou.r = 8` (`>> 8`)
+- relative coordinates are measured against supplied COM
+- each vertex contributes proportional to `pointMass * (dx² + dy²)`
+- child components recurse
+- integer overflow is clamped
 
-This establishes the native inertia operator's actual fixed-point coordinate treatment. The Roblox implementation must not substitute a generic textbook inertia formula for this native polygon-point procedure.
+Do not replace this native polygon-point procedure with a generic textbook inertia approximation and call it native parity.
 
-## VERIFIED FORCE/ACCUMULATOR OPERATOR
-`anb.a(int n2, int n3, int n4, byte by, int n5)` performs:
-
-- `t += n5`
-- `o += n2`
-- `dx = n3 - body.d`
-- `dy = n4 - body.e`
-- `dyScaled = (-dy) >> ge.c`
-- `dxScaled = dx >> ge.c`
-- torque accumulator increment:
-  `p += ((dyScaled * n5) - (n2 * dxScaled)) >> tua.a`
-- `p` clamps to signed 32-bit range
-- the supplied force point is forwarded into `cqb.a(...)`
-
-With bytecode initializers recovered, both `ge.c` and `tua.a` are **4**. The earlier RAW-GAP classification for those constants is closed.
+## VERIFIED FORCE/TORQUE
+`anb.a(...)`:
+- accumulates linear force
+- computes force-point offset from body position
+- applies `ge.c = 4`
+- accumulates integer cross-product torque
+- applies `tua.a = 4`
+- clamps signed integer overflow
 
 ## VERIFIED ACCUMULATOR CONSUMPTION
-`anb.b(int n2, int n3)` consumes the transient accumulators as:
+`anb.b(int,int)`:
+- `f += t / divisor`
+- `h += o / divisor`
+- clears linear accumulators
+- angular delta = `p / max(m >> wf.e, 1)`
+- `n += angularDelta`
+- clears torque accumulator
 
-- `f += t / n3`
-- `h += o / n3`
-- clear `t` and `o`
-- if `p != 0`:
-  - angular delta = `p / max(m >> wf.e, 1)`
-  - `n += angular delta`
-  - clear `p`
-
-`wf.e = 12` is directly verified.
+`wf.e = 12` is CODE-VERIFIED.
 
 ## ROBLOX EQUIVALENT
-The existing `RigidBody2D` remains the single Roblox physics authority. This finding does **not** justify replacing its current Roblox execution values wholesale.
+`RigidBody2D` remains the sole Roblox physics authority. Existing Roblox mappings remain valid unless evidence shows they are wrong, obsolete, duplicated, or otherwise harmful to faithful behavior.
 
-Required next implementation boundary:
-- add native fixed-point helper/operator representation where needed;
-- preserve native mass/COM/inertia state separately from Roblox mapped values;
-- feed recovered operators from authoritative component geometry;
-- do not introduce arbitrary Newton/stud conversion.
+Native values/operators should be represented separately and translated at the Roblox consumer boundary. Do not blindly substitute native fixed-point units for Roblox execution units.
 
-## MULTIPLAYER ADAPTATION
-All consequential body-state updates remain server-authoritative. Clients receive replicated physical state/projection; they do not own mass, COM, inertia, force accumulators, or structural mutations.
+## MULTIPLAYER
+Consequential body state remains server-authoritative: mass, COM, inertia, force/torque accumulators, structural mutations, and consequential physics.
 
 ## TEST
-Executed against the exact uploaded JAR using `javap -c -p`. Static assertions confirmed the four initializer values and the relevant bytecode shift sites.
+Direct `javap -c -p` inspection of the exact JAR verified the `wfb.u` polygon-area construction and the previously recovered physics operators/constants.
 
-Roblox Studio runtime parity is **not verified**.
+Roblox Studio runtime parity remains unverified.
 
 ## NEXT STEP
-Trace the remaining `anb` body update caller/timestep path and `wfb.u` mass derivation, then patch `BodyRecomputeService`/`RigidBody2D` only at the demonstrated consumer boundaries.
+Trace the `wfb` coordinate-array producer and `finaloutline` construction so the native polygon geometry can be mapped into the existing Roblox component representation. Then trace the native `anb` update caller/divisor.
 
 ## FUTURE AGENT NOTE
-`ge.c=4`, `tua.a=4`, `ou.r=8`, and `wf.e=12` are now direct JAR bytecode facts. Do not revert them to inferred/unknown status. Native COM uses mass-weighted coordinates with a `>>4` contribution shift; native polygon inertia uses vertex coordinates `>>8`. Preserve the distinction between these native fixed-point operators and Roblox runtime units.
+IMPORTANT: `wfb.u` is geometry-derived. Do not model it as a free-standing component mass unless another native call explicitly overwrites it. The exact observed construction is the shoelace-style signed polygon sum divided by 2, with integer min/max clamping. Preserve existing Roblox mass mappings while building a native-informed geometry path; do not rip out working Roblox values merely to imitate the Java field layout.

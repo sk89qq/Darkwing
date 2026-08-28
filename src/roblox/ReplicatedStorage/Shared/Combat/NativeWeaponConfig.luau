@@ -15,6 +15,7 @@ local NativeWeaponConfig = {}
 export type ParameterKey = {
 	NativeKey: string,
 	Unit: string,
+	Value: any,
 	Status: "RESOLVED" | "MISSING_NATIVE_VALUE",
 }
 
@@ -28,6 +29,7 @@ local function parameter(nativeKey: string, unit: string): ParameterKey
 	return {
 		NativeKey = nativeKey,
 		Unit = unit,
+		Value = resolved.Value,
 		Status = resolved.Status,
 	}
 end

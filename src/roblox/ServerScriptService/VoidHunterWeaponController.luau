@@ -8,6 +8,7 @@
 	- TeamIdentity owns team validation.
 	- Components owns component definitions and hardpoint metadata.
 	- CapacitorSystem owns ship energy state.
+	- NativeWeaponRuntime owns source-confirmed weapon timing/energy values.
 
 	Roblox Instances remain the physical/presentation projection. Attributes used on
 	transient projectiles and effects are local object state, not component authority.
@@ -27,6 +28,7 @@ local CombatTypes = require(ReplicatedStorage.Shared.Combat.CombatTypes)
 local CapacitorSystem = require(ReplicatedStorage.Shared.Combat.CapacitorSystem)
 local ShieldSystem = require(ReplicatedStorage.Shared.Combat.ShieldSystem)
 local BallisticsEngine = require(ReplicatedStorage.Shared.Combat.BallisticsEngine)
+local NativeWeaponRuntime = require(ReplicatedStorage.Shared.Combat:WaitForChild("NativeWeaponRuntime"))
 local TeamIdentity = require(ReplicatedStorage.Shared.Combat:WaitForChild("TeamIdentity"))
 
 local UNIT = Components.UNIT or 7
@@ -719,12 +721,20 @@ FireWeaponEvent.OnServerEvent:Connect(function(player: Player, ship: any, weapon
 	if not aimValid then warn("[WeaponController] " .. (aimErr or "Invalid aim direction")); return end
 
 	local now = os.clock()
-	local cooldown = definition.FireRate or definition.Cooldown or 0.5
+	local nativeCooldown = NativeWeaponRuntime.GetReloadSeconds(typeName)
+	local cooldown = nativeCooldown
+	if cooldown == nil then
+		cooldown = definition.FireRate or definition.Cooldown or 0.5
+	end
 	if now < (weaponCooldowns[weapon] or 0) + cooldown then return end
 
 	ensureShipState(ship)
 	local capacitor = shipCapacitors[ship]
-	local powerCost = definition.PowerPerShot or 0
+	local nativeEnergyCost = NativeWeaponRuntime.GetEnergyCost(typeName)
+	local powerCost = nativeEnergyCost
+	if powerCost == nil then
+		powerCost = definition.PowerPerShot or 0
+	end
 	if powerCost > 0 and (not capacitor or not capacitor:Consume(powerCost)) then return end
 	weaponCooldowns[weapon] = now
 
@@ -776,12 +786,20 @@ FireScramblerEvent.OnServerEvent:Connect(function(player: Player, ship: any, scr
 	if not definition then return end
 
 	local now = os.clock()
-	local cooldown = definition.Cooldown or 0
+	local nativeCooldown = NativeWeaponRuntime.GetReloadSeconds(typeName)
+	local cooldown = nativeCooldown
+	if cooldown == nil then
+		cooldown = definition.Cooldown or 0
+	end
 	if now < (scramblerCooldowns[scrambler] or 0) + cooldown then return end
 
 	ensureShipState(ship)
 	local capacitor = shipCapacitors[ship]
-	local powerCost = definition.PowerCost or 0
+	local nativeEnergyCost = NativeWeaponRuntime.GetEnergyCost(typeName)
+	local powerCost = nativeEnergyCost
+	if powerCost == nil then
+		powerCost = definition.PowerCost or 0
+	end
 	if powerCost > 0 and (not capacitor or not capacitor:Consume(powerCost)) then return end
 
 	scramblerCooldowns[scrambler] = now

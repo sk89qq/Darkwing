@@ -91,6 +91,13 @@ function CapacitorSystem:CalculateFromShip(shipModel: Model)
 		self.CurrentEnergy = math.clamp(self.CurrentEnergy, 0, self.MaxEnergy)
 	end
 	self.OverchargeCapacity = self.MaxEnergy * OVERCHARGE_MULTIPLIER
+
+	-- Any runtime caller that constructs a capacitor and calculates it from a
+	-- ship automatically enters the same canonical registry used by GetForShip.
+	-- This removes a split-brain state path without changing existing callers.
+	shipCapacitors[shipModel] = self
+	shipModel:SetAttribute("EnergyPercent", self:GetEnergyPercent())
+	shipModel:SetAttribute("EnergyCapacity", self.MaxEnergy)
 end
 
 function CapacitorSystem.RegisterShip(shipModel: Model): any
@@ -103,9 +110,6 @@ function CapacitorSystem.RegisterShip(shipModel: Model): any
 
 	local capacitor = CapacitorSystem.new()
 	capacitor:CalculateFromShip(shipModel)
-	shipCapacitors[shipModel] = capacitor
-	shipModel:SetAttribute("EnergyPercent", capacitor:GetEnergyPercent())
-	shipModel:SetAttribute("EnergyCapacity", capacitor.MaxEnergy)
 	return capacitor
 end
 

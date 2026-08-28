@@ -1,18 +1,21 @@
+--!strict
 --[=[
 	NativeWeaponConfig
-	
+
 	Canonical parameter-key contract for Void Hunters weapon behavior.
-	This module intentionally stores source-key names and provenance metadata,
-	not guessed numeric values. Numeric values are populated only after the
-	corresponding native configuration consumer is directly recovered.
+	Numeric values are resolved from NativeParameterResolver, whose backing
+	table is the complete 235-row native configuration attestation.
+	Units remain native until an explicitly verified consumer conversion exists.
 ]=]
+
+local NativeParameterResolver = require(script.Parent:WaitForChild("NativeParameterResolver"))
 
 local NativeWeaponConfig = {}
 
 export type ParameterKey = {
 	NativeKey: string,
 	Unit: string,
-	Status: "RAW_KEY_EXTRACTED" | "RAW_VALUE_PENDING",
+	Status: "RESOLVED" | "MISSING_NATIVE_VALUE",
 }
 
 export type WeaponContract = {
@@ -21,10 +24,11 @@ export type WeaponContract = {
 }
 
 local function parameter(nativeKey: string, unit: string): ParameterKey
+	local resolved = NativeParameterResolver.Resolve(nativeKey)
 	return {
 		NativeKey = nativeKey,
 		Unit = unit,
-		Status = "RAW_KEY_EXTRACTED",
+		Status = resolved.Status,
 	}
 end
 
@@ -125,6 +129,10 @@ NativeWeaponConfig.Contracts = {
 
 function NativeWeaponConfig.GetContract(name: string): WeaponContract?
 	return NativeWeaponConfig.Contracts[name]
+end
+
+function NativeWeaponConfig.GetValue(nativeKey: string): any
+	return NativeParameterResolver.Get(nativeKey)
 end
 
 return NativeWeaponConfig

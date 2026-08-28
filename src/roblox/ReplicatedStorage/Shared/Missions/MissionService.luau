@@ -5,6 +5,9 @@
 	This service intentionally does not define a specific game mode. Mode data is
 	provided as MissionDefinition and evaluated through MissionConditionService
 	and MissionActionService.
+
+	Global mission inputs are exposed through NativeMissionConfig, which resolves
+	only source-backed native values. It does not invent per-mode sequencing.
 ]=]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -12,6 +15,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MissionTypes = require(ReplicatedStorage.Shared.Missions:WaitForChild("MissionTypes"))
 local MissionConditionService = require(ReplicatedStorage.Shared.Missions:WaitForChild("MissionConditionService"))
 local MissionActionService = require(ReplicatedStorage.Shared.Missions:WaitForChild("MissionActionService"))
+local NativeMissionConfig = require(ReplicatedStorage.Shared.Missions:WaitForChild("NativeMissionConfig"))
 
 local MissionService = {}
 MissionService.__index = MissionService
@@ -45,6 +49,14 @@ function MissionService.new(definition: MissionTypes.MissionDefinition)
 	self.OnStateChanged = nil :: ((string, string) -> ())?
 	self.OnVictory = nil :: ((string) -> ())?
 	return self
+end
+
+function MissionService.GetNativeConfig(key: string): number
+	return NativeMissionConfig.Get(key)
+end
+
+function MissionService.GetNativeConfigSnapshot(): {[string]: number}
+	return NativeMissionConfig.GetAll()
 end
 
 function MissionService:SetStateChangedCallback(callback: ((string, string) -> ())?)

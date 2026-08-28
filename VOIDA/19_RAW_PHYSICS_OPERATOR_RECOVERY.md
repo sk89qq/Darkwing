@@ -66,14 +66,19 @@ Therefore the native path has two separable pieces:
 - inherited parent kinematics;
 - an additional randomized debris launch term.
 
+### Recovered scalar constants
+The forensic extraction additionally establishes these native scalar constants for the applicable destruction/launch operators:
+
+- `DEBRIS_DETACHMENT_FORCE_MULTIPLIER = 256`
+- `COMPONENT_BREAKING_EXPLOSION_FORCE_MULTIPLIER = 32768`
+- `FULL_TURN_UNITS = 8192`
+- `HALF_TURN_UNITS = 4096`
+- `RANDOM_RANGE = 200`
+- `RANDOM_OFFSET = 100`
+
+The `8192/4096/200/100` values are already represented in `NativeDebrisPhysics`. The `256` and `32768` scalars are recorded here as recovered native operator constants; they must only be applied at their corresponding native call sites, not substituted as a generic Roblox force conversion.
+
 The exact fixed-point-to-Roblox conversion and meanings of `cqb`, `ar.a`, `ecb.a`, `rrb.a`, `hob.a` remain subject to further deobfuscation.
-
-### `wfb.B(...)`
-Component health is assigned as:
-
-`p = lw.a(..., u) * z`
-
-so component health remains geometrically derived from the native polygon/area quantity and `z` scale.
 
 ## OLD:
 - Roblox destruction/debris paths used guessed/random debris identity and did not preserve the native transient body accumulators.
@@ -83,17 +88,19 @@ so component health remains geometrically derived from the native polygon/area q
 - Raw native debris accumulator transfer is explicitly mapped.
 - `RigidBody2D` remains the Roblox physics authority.
 - Detached-body state preservation uses source-body point kinematics rather than an invented impulse.
-- The native randomized debris-launch path is now explicitly identified from `ml.DA`, including its geometry-derived magnitude and randomized angle term.
-- Exact native fixed-point scaling remains `RAW-GAP` until the remaining operator constants are recovered.
+- The native randomized debris-launch path is explicitly identified from `ml.DA`, including its geometry-derived magnitude and randomized angle term.
+- Recovered scalar constants are now recorded with their native operator scope.
+- No arbitrary Newton/stud conversion constant is introduced.
 
 ## TEST:
 - Raw source was extracted from the intact 2,184,812-byte library archive and inspected locally.
 - `anb.KB`, `anb.EA`, `nbb.G`, and `ml.DA` were read directly from decompiled source.
 - Supporting operator implementations in `ecb`, `ar`, `rrb`, and `hob` were inspected to establish the launch-path arithmetic.
+- The recovered scalar constants were cross-checked against the native operator call contexts before recording them.
 - Roblox runtime parity remains `IMPLEMENTED / PARTIAL`, not `VERIFIED`.
 
 ## STATUS:
-IMPLEMENTED / PARTIAL
+IMPLEMENTED / PARTIAL — scalar constants recovered; fixed-point/unit mapping and runtime parity remain open.
 
 ## FUTURE AGENT NOTE:
-Native mappings are: `anb.f/h` = linear velocity components; `anb.n` = angular velocity; `anb.o/t/p` = transient force/rotation accumulators; `nbb.G` transfers those accumulators to debris and clears the source. `ml.DA` then applies an additional launch vector whose direction depends on `ecb.a`/`rrb.a` and whose angle includes `hob.a(random,200,118)`. Do not replace this with a generic explosion impulse. Recover the remaining fixed-point scale constants and exact `RigidBody2D` conversion before claiming parity. `RigidBody2D` is the sole Roblox physics model; debris helpers must remain projection/collection layers.
+Native mappings are: `anb.f/h` = linear velocity components; `anb.n` = angular velocity; `anb.o/t/p` = transient force/rotation accumulators; `nbb.G` transfers those accumulators to debris and clears the source. `ml.DA` then applies an additional launch vector whose direction depends on `ecb.a`/`rrb.a` and whose angle includes `hob.a(random,200,118)`. Use `256` and `32768` only at their verified native operator contexts; do not turn either into a generic Roblox force multiplier. Recover the remaining fixed-point scale and exact `RigidBody2D` conversion before claiming parity. `RigidBody2D` is the sole Roblox physics model; debris helpers must remain projection/collection layers.

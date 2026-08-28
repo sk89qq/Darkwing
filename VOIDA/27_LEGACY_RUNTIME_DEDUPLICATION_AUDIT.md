@@ -26,20 +26,28 @@ Repository code-search sweeps were run for the deleted controller path, `VoidHun
 
 `Shared/Combat` contains the intended authority/runtime set including `ComponentAuthority`, `NativeGameplayConfig`, `NativeParameterResolver`, `NativeWeaponConfig`, `NativeWeaponRuntime`, `RepairSystem`, and `ShieldSystem`. `ComponentAuthority` explicitly owns component HP/state and requires an explicit `ComponentType`; it does not infer gameplay state from Part names.
 
-`RepairSystem` delegates component health mutation to `ComponentAuthority`, so repair does not introduce a second HP authority. `NativeWeaponRuntime` bridges source-resolved reload and energy parameters through `NativeParameterResolver`, with the native 50-tick/second time conversion isolated at the consumer boundary.
+`RepairSystem` delegates component health mutation to `ComponentAuthority`, so repair does not introduce a second HP authority.
+
+`NativeWeaponRuntime` is now the source-resolved timing/energy boundary for every weapon type for which native reload/energy keys were recovered: `MachineGun`, `MassDriver`, `Laser`, `PhasedEnergyBeam`, `BombletSpray`, `SniperCannon`, `Torpedo`, `FighterBay`, `MissileLauncher`, `PointDefence`, and `ScramblerPulse`. Native time conversion remains isolated at 50 native ticks/second. No Roblox-unit conversion for damage/force/speed was introduced.
+
+The live `ServerScriptService/VoidHunterWeaponController.luau` was re-read after the previous change. Its fire and scrambler paths already call `NativeWeaponRuntime.GetReloadSeconds()` and `NativeWeaponRuntime.GetEnergyCost()` first, falling back to component-definition timing/energy only when no native contract exists. Therefore the consumer wiring was already present; this pass expanded the native contract coverage rather than duplicating the consumer logic.
 
 ## Duplicate-state findings
 
 1. **Component identity:** old nested component table used display-name lookup in legacy combat code; current authority requires explicit `ComponentType`/shared component authority.
 2. **Combat HP:** old controller maintained private `partHP`; this conflicts with canonical `ComponentAuthority` state.
-3. **Weapon state:** old controller maintained private cooldown/energy tables; the native runtime now provides the source-resolved reload/energy contract for currently mapped weapons.
+3. **Weapon state:** the active controller keeps only per-instance last-fire timestamps; source-resolved reload/energy values now come from `NativeWeaponRuntime` for all recovered native contracts.
 4. **Socket graph:** nested file was only a re-export, so retaining it created an unnecessary second import surface.
 5. **Audio:** old sound IDs/volumes are prototype choices and have not been source-verified; retaining them as runtime truth would violate the forensic completion policy.
 6. **Shield:** `ShieldSystem` still owns its live shield state because no separate source-verified shield authority has yet been established; its absorption/reboot constants remain explicitly `[INFERRED]`.
 
+## Newly identified runtime defect
+
+The active weapon controller still imports `ReplicatedStorage.VoidHunters:WaitForChild("VoidHunterSoundManager")`, while the entire `ReplicatedStorage/VoidHunters` runtime directory was intentionally deleted. This is a stale legacy import and must be removed or migrated to a canonical audio boundary before the controller can be considered runtime-clean. Do not resurrect the archived prototype sound manager as gameplay truth.
+
 ## Remaining reconciliation targets
 
-- Verify actual runtime callers of `NativeWeaponRuntime` and migrate any remaining weapon consumers that still read prototype weapon timing/energy fields.
+- Remove/migrate the stale `VoidHunterSoundManager` import and calls without restoring prototype audio IDs as authoritative data.
 - Audit Arena/PvP managers for private copies of shield, capacitor, respawn, and match-state values.
 - Recover the original shield configuration/control-flow consumers before replacing the explicitly inferred `ShieldSystem` model.
 - Audit `SharedSource`/`ClientSource` mirrors separately; these may be forensic source mirrors rather than runtime duplicates and must not be deleted merely because names overlap.

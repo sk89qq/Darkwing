@@ -56,9 +56,17 @@ Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
 
 Status: **IMPLEMENTED — PARTIAL FORENSIC RECOVERY; ROBLOX RUNTIME PENDING**.
 
+### P0.5 — Native `anb` mass/COM/inertia/update equations
+- Original JAR bytecode directly verified `ge.c=4`, `tua.a=4`, `wf.e=12`, and `ou.r=8`.
+- Native mass aggregation, mass-weighted COM accumulation, polygon-vertex inertia accumulation, point-force torque accumulation, and linear/angular accumulator integration are recovered and recorded in `VOIDA/27_NATIVE_ANB_EQUATIONS_RECOVERY.md`.
+- Added `Shared/Physics/NativeAnbPhysics.luau` as an integer-domain equation layer; it intentionally performs no unverified native-to-Roblox unit conversion.
+- Exact semantic/unit conversion performed by `lw.a`, integration-divisor call-site meaning, surrounding `d(B)` update behavior, and Roblox runtime parity remain open.
+
+Status: **IMPLEMENTED — RAW EQUATIONS RECOVERED; ROBLOX MAPPING PARTIAL**.
+
 ## Remaining P0
 
-1. Recover exact `anb` mass/COM/inertia/update equations and native-to-Roblox unit conversion before parity claims.
+1. Recover exact native-to-Roblox unit conversion and call-site mapping for `anb` physics before parity claims.
 2. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
 3. Port MissionCondition/MissionAction instead of expanding Arena-only orchestration.
 

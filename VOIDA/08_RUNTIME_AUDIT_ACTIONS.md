@@ -60,7 +60,8 @@ Status: **IMPLEMENTED — PARTIAL FORENSIC RECOVERY; ROBLOX RUNTIME PENDING**.
 - Original JAR bytecode directly verified `ge.c=4`, `tua.a=4`, `wf.e=12`, and `ou.r=8`.
 - Native mass aggregation, mass-weighted COM accumulation, polygon-vertex inertia accumulation, point-force torque accumulation, and linear/angular accumulator integration are recovered and recorded in `VOIDA/27_NATIVE_ANB_EQUATIONS_RECOVERY.md`.
 - Added `Shared/Physics/NativeAnbPhysics.luau` as an integer-domain equation layer; it intentionally performs no unverified native-to-Roblox unit conversion.
-- Exact semantic/unit conversion performed by `lw.a`, integration-divisor call-site meaning, surrounding `d(B)` update behavior, and Roblox runtime parity remain open.
+- Corrected the prior attribution: `lw.a(byte,int)` is a trigonometric lookup helper used by `wfb`, not the native-to-Roblox unit converter.
+- Exact native-to-Roblox unit conversion and call-site mapping remain open.
 
 Status: **IMPLEMENTED — RAW EQUATIONS RECOVERED; ROBLOX MAPPING PARTIAL**.
 
@@ -70,17 +71,17 @@ Status: **IMPLEMENTED — RAW EQUATIONS RECOVERED; ROBLOX MAPPING PARTIAL**.
 - `NativeParameterResolver` now loads the native table at module initialization, preserves source provenance, hard-fails missing lookups, exposes `Get`, `Has`, `GetAll`, and validates the expected 235-entry coverage.
 - `NativeWeaponConfig` now resolves contract status against the authoritative native resolver instead of reporting all parameters as pending.
 - Added `Shared/Combat/NativeWeaponRuntime.luau` as the explicit weapon consumer boundary. Native time values use the source-confirmed `oq.l = 50` conversion; unresolved damage/force/speed conversion remains intentionally isolated.
+- The live server `VoidHunterWeaponController` now consumes `NativeWeaponRuntime` for source-confirmed reload/cooldown and energy values for `MassDriver`, `Laser`, `MissileLauncher`, `PointDefence`, and `ScramblerPulse`; prototype timing/energy fallbacks remain only for weapon types without a verified native contract.
 - No native value is silently replaced with a prototype/Roblox value by these modules.
 
-Status: **IMPLEMENTED — 235/235 STATIC AUTHORITY; CONSUMER MIGRATION IN PROGRESS**.
+Status: **IMPLEMENTED — 235/235 STATIC AUTHORITY; SOURCE-CONFIRMED WEAPON TIMING/ENERGY WIRED; ROBLOX RUNTIME PENDING**.
 
 ## Remaining P0
 
-1. Wire `NativeWeaponRuntime` into the live weapon controller for all source-confirmed weapon timing/energy consumers, replacing prototype `FireRate`/`Cooldown`/`PowerPerShot` fallbacks.
-2. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
-3. Recover exact native-to-Roblox unit conversion and call-site mapping for `anb` physics before parity claims.
-4. Port MissionCondition/MissionAction and the recovered per-mode MissionBuilder/MissionControl sequencing instead of expanding Arena-only orchestration.
-5. Complete native 56-slot component reconciliation, retaining `RAW-GAP`/`INFERRED` status for generated slots without direct source evidence.
+1. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
+2. Recover exact native-to-Roblox unit conversion and call-site mapping for `anb` physics before parity claims.
+3. Port MissionCondition/MissionAction and the recovered per-mode MissionBuilder/MissionControl sequencing instead of expanding Arena-only orchestration.
+4. Complete native 56-slot component reconciliation, retaining `RAW-GAP`/`INFERRED` status for generated slots without direct source evidence.
 
 ## Remaining P1
 

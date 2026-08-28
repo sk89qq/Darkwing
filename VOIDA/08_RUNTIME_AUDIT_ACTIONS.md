@@ -40,9 +40,9 @@ Status: **IMPLEMENTED — STATIC VERIFIED**.
 Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
 
 ### P0.3 — Atomic structural replacement
-- `StructuralAuthority.ReplaceComponent` now validates the occupied parent hardpoint and replacement socket before destructive mutation.
+- `StructuralAuthority.ReplaceComponent` validates the occupied parent hardpoint and replacement socket before destructive mutation.
 - Replacement is committed to the same authoritative hardpoint before the old component is detached.
-- Failure rolls back the touched instances and authoritative attributes rather than reconstructing the old state from a detached debris projection.
+- Failure rolls back the touched instances and authoritative attributes.
 - Logical graph mutation remains inside `StructuralAuthority`.
 
 Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
@@ -52,7 +52,7 @@ Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
 - Native launch constants `FULL_TURN_UNITS=8192`, `HALF_TURN_UNITS=4096`, `RANDOM_RANGE=200`, and `RANDOM_OFFSET=100` are mapped in `NativeDebrisPhysics`.
 - Additional recovered destruction/launch scalar constants `256` and `32768` are recorded with their native operator scope.
 - Detached-body point-kinematic inheritance remains implemented through `RigidBody2D`.
-- Exact fixed-point/unit conversion, complete call-site application of the recovered scalars, debris persistence/cleanup semantics, and Roblox runtime parity remain open.
+- Exact fixed-point/unit conversion, complete call-site application of recovered scalars, debris persistence/cleanup semantics, and Roblox runtime parity remain open.
 
 Status: **IMPLEMENTED — PARTIAL FORENSIC RECOVERY; ROBLOX RUNTIME PENDING**.
 
@@ -66,22 +66,34 @@ Status: **IMPLEMENTED — PARTIAL FORENSIC RECOVERY; ROBLOX RUNTIME PENDING**.
 Status: **IMPLEMENTED — RAW EQUATIONS RECOVERED; ROBLOX MAPPING PARTIAL**.
 
 ### P0.6 — Complete native game-variable authority
-- Added `Shared/Combat/NativeGameplayConfig.luau` as the runtime projection of the complete **235/235** source-resolved native configuration vector.
-- Restored the 18 keys that were absent from the intermediate 217-key runtime table: `USE_TRAILS`, `FIGHTER_VISION`, `TEAM_SELECTION_SPEEDUP`, `FULL_MISSION_SET`, `WAIT_FOR_PLAYERS`, `KEEP_TEAM_COLOURS`, `FOG_OF_WAR_ON`, `USE_MODELS`, `BOTS`, `AUTOAIM`, `SALVOAIM`, `FIXEDAIM`, `ANGLESET`, `PEDROS_REPAIR_MODE`, `SHIP_PERSISTENCE`, `CLIENT_SIDE_DRAGGING`, `MISSION_VOTES`, and `MUTATOR_VOTES`.
-- `NativeParameterResolver` now loads the native table at module initialization, preserves source provenance, hard-fails missing lookups, exposes `Get`, `Has`, `GetAll`, and validates the expected 235-entry coverage.
-- `NativeWeaponConfig` now resolves contract status against the authoritative native resolver instead of reporting all parameters as pending.
-- Added `Shared/Combat/NativeWeaponRuntime.luau` as the explicit weapon consumer boundary. Native time values use the source-confirmed `oq.l = 50` conversion; unresolved damage/force/speed conversion remains intentionally isolated.
-- The live server `VoidHunterWeaponController` now consumes `NativeWeaponRuntime` for source-confirmed reload/cooldown and energy values for `MassDriver`, `Laser`, `MissileLauncher`, `PointDefence`, and `ScramblerPulse`; prototype timing/energy fallbacks remain only for weapon types without a verified native contract.
+- `NativeGameplayConfig` remains the 235/235 source-resolved native vector.
+- `NativeParameterResolver` remains the sole runtime source for native configuration values.
+- `NativeWeaponRuntime` is wired into the live weapon controller for source-confirmed weapon timing/energy contracts.
 - No native value is silently replaced with a prototype/Roblox value by these modules.
 
 Status: **IMPLEMENTED — 235/235 STATIC AUTHORITY; SOURCE-CONFIRMED WEAPON TIMING/ENERGY WIRED; ROBLOX RUNTIME PENDING**.
+
+### P0.7 — Native mission input authority
+- Added `Shared/Missions/NativeMissionConfig.luau` as the mission/global-input adapter over `NativeParameterResolver`.
+- Exposed source-backed mission inputs including mission timing, terrain probabilities, voting steps, debris probability, resource-node timing, respawn time, player wait/full-set flags, and ship/fighter limits.
+- `MissionService` now exposes `GetNativeConfig` / `GetNativeConfigSnapshot` through this authority boundary.
+- No per-mode sequencing is invented by this layer.
+
+Status: **IMPLEMENTED — SOURCE-BACKED INPUT AUTHORITY; PER-MODE SEQUENCING STILL OPEN**.
+
+### P0.8 — Native component slot ledger
+- Reconciled the definitive component slot artifact into a complete **56/56 native slot ledger**.
+- Every native ID `0..55` now has an explicit initializer/reference classification.
+- Direct, generated, and referenced-object entries remain distinguished; no generated geometry or native→Roblox identity was guessed.
+
+Status: **IMPLEMENTED — SOURCE LEDGER COMPLETE; NATIVE→ROBLOX SEMANTIC RECONCILIATION PARTIAL**.
 
 ## Remaining P0
 
 1. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
 2. Recover exact native-to-Roblox unit conversion and call-site mapping for `anb` physics before parity claims.
-3. Port MissionCondition/MissionAction and the recovered per-mode MissionBuilder/MissionControl sequencing instead of expanding Arena-only orchestration.
-4. Complete native 56-slot component reconciliation, retaining `RAW-GAP`/`INFERRED` status for generated slots without direct source evidence.
+3. Recover and port the exact per-mode MissionBuilder/MissionControl sequencing where raw source evidence is still incomplete.
+4. Resolve native→Roblox semantic identity/geometry for component slots whose constructors/behaviors remain referenced or generated.
 
 ## Remaining P1
 
@@ -91,14 +103,12 @@ Status: **IMPLEMENTED — 235/235 STATIC AUTHORITY; SOURCE-CONFIRMED WEAPON TIMI
 - Audit lifecycle connection cleanup.
 - Replace hot-loop `workspace:GetDescendants()` scans with indexed registries/spatial queries.
 - Verify all DataStore schemas are primitive-only and versioned.
-- Replace any prototype tuning literals only after the corresponding native semantic mapping is source-backed.
+- Replace prototype tuning literals only after the corresponding native semantic mapping is source-backed.
 
 ## Source-truth rule
-
 Native source remains authoritative. `VERIFIED` requires an explicit acceptance test and source citation. `ROBLOX-MAPPING` and `INFERRED` values must not be promoted to source truth merely because they are compatible with the reference.
 
 ## Future-agent protocol
-
 Read `VOIDA/00_RAW_FORENSIC_REFERENCE.md` first. Then inspect the smallest relevant raw class/method needed to close the delta. Work only on the highest unresolved item. Do not reopen a completed item unless new source evidence contradicts it.
 
 For each fix:

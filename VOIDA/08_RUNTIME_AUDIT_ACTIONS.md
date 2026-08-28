@@ -47,12 +47,20 @@ Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
 
 Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
 
+### P0.4 — Native destruction/debris operator recovery
+- Native `anb` accumulator transfer, `nbb.G` split-state transfer, and `ml.DA` randomized debris-launch structure are recovered and documented.
+- Native launch constants `FULL_TURN_UNITS=8192`, `HALF_TURN_UNITS=4096`, `RANDOM_RANGE=200`, and `RANDOM_OFFSET=100` are mapped in `NativeDebrisPhysics`.
+- Additional recovered destruction/launch scalar constants `256` and `32768` are recorded with their native operator scope.
+- Detached-body point-kinematic inheritance remains implemented through `RigidBody2D`.
+- Exact fixed-point/unit conversion, complete call-site application of the recovered scalars, debris persistence/cleanup semantics, and Roblox runtime parity remain open.
+
+Status: **IMPLEMENTED — PARTIAL FORENSIC RECOVERY; ROBLOX RUNTIME PENDING**.
+
 ## Remaining P0
 
-1. Recover exact detach force, momentum carry-over, debris persistence, and cleanup semantics from native `anb` / `nbb` / `ml` behavior.
-2. Recover exact `anb` mass/COM/inertia/update equations and native-to-Roblox unit conversion before parity claims.
-3. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
-4. Port MissionCondition/MissionAction instead of expanding Arena-only orchestration.
+1. Recover exact `anb` mass/COM/inertia/update equations and native-to-Roblox unit conversion before parity claims.
+2. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
+3. Port MissionCondition/MissionAction instead of expanding Arena-only orchestration.
 
 ## Remaining P1
 

@@ -360,8 +360,9 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 		return nil, false
 	end
 
-	-- Phase 1: validate the replacement against a temporary graph using the
-	-- old component's parent/socket relationship. No existing state is mutated.
+	-- Transaction phase: derive the exact occupied hardpoint and replacement
+	-- socket before mutating the live graph. No detach/debris operation occurs
+	-- until every validation below has succeeded.
 	local graph = StructuralAuthority.BuildGraph(ship)
 	local oldNodeId = oldPart:GetAttribute("NodeId")
 	local oldNode = oldNodeId and graph.Nodes[oldNodeId]
@@ -374,88 +375,129 @@ function StructuralAuthority.ReplaceComponent(ship: Model, oldPart: BasePart, ne
 
 	local parentNode = graph.Nodes[oldNode.ParentNodeId]
 	local parentSocket = parentNode and parentNode.Sockets[oldNode.ParentSocketId]
-	if not parentNode or not parentSocket then
-		return nil, false
-	end
-
-	local childSocketId = getCompatibleOutSocket(graph, parentNode, parentSocket, oldPart, componentType)
-	if not childSocketId then
+	if not parentNode or not parentSocket or not parentSocket.IsOccupied then
 		return nil, false
 	end
 
 	local childSockets = graph:ExtractComponentSockets(componentType)
-	local childSocket = childSockets[childSocketId]
-	if not childSocket then
+	local replacementSocketId = getCompatibleOutSocket(graph, parentNode, parentSocket, newPart, componentType)
+	if not replacementSocketId then
+		return nil, false
+	end
+	local replacementSocket = childSockets[replacementSocketId]
+	if not replacementSocket then
 		return nil, false
 	end
 
-	local candidateCFrame = parentNode.Part.CFrame * CFrame.new(parentSocket.LocalOffset) * CFrame.new(-childSocket.LocalOffset)
-	if maxSnapDistance then
-		local distance = (candidateCFrame.Position - oldPart.Position).Magnitude
-		if distance > maxSnapDistance then
-			return nil, false
-		end
+	local targetSocketPosition = parentNode.Part.CFrame:PointToWorldSpace(parentSocket.LocalOffset)
+	local targetRotation = parentNode.Part.CFrame - parentNode.Part.CFrame.Position
+	local candidateCFrame = CFrame.new(targetSocketPosition) * targetRotation * CFrame.new(-replacementSocket.LocalOffset)
+	if maxSnapDistance and (candidateCFrame.Position - oldPart.Position).Magnitude > maxSnapDistance then
+		return nil, false
 	end
 
-	-- Phase 2: commit removal only after replacement validation succeeds.
-	local oldParentId = oldNode.ParentNodeId
-	local oldParentSocketId = oldNode.ParentSocketId
+	-- Snapshot all live state that the commit may touch. This makes failure a
+	-- true rollback rather than a best-effort reconstruction of the old part.
+	local oldParent = oldPart.Parent
 	local oldCFrame = oldPart.CFrame
-	local oldAttributes = {
+	local newParent = newPart.Parent
+	local newCFrame = newPart.CFrame
+	local oldAttrs = {
 		NodeId = oldPart:GetAttribute("NodeId"),
 		ComponentType = oldPart:GetAttribute("ComponentType"),
+		ParentNodeId = oldPart:GetAttribute("ParentNodeId"),
+		ParentSocketId = oldPart:GetAttribute("ParentSocketId"),
+		ConnectedSocketId = oldPart:GetAttribute("ConnectedSocketId"),
 		IsDebris = oldPart:GetAttribute("IsDebris"),
 		ComponentDetached = oldPart:GetAttribute("ComponentDetached"),
 	}
+	local newAttrs = {
+		NodeId = newPart:GetAttribute("NodeId"),
+		ComponentType = newPart:GetAttribute("ComponentType"),
+		ParentNodeId = newPart:GetAttribute("ParentNodeId"),
+		ParentSocketId = newPart:GetAttribute("ParentSocketId"),
+		ConnectedSocketId = newPart:GetAttribute("ConnectedSocketId"),
+		IsDebris = newPart:GetAttribute("IsDebris"),
+		ComponentDetached = newPart:GetAttribute("ComponentDetached"),
+	}
 
-	local detached = StructuralAuthority.DetachComponent(ship, oldPart, "Replacement")
-	if not detached then
+	local function restoreAttributes(part: BasePart, attrs: { [string]: any })
+		for name, value in pairs(attrs) do
+			part:SetAttribute(name, value)
+		end
+	end
+
+	-- Commit phase. The new component is installed at the same authoritative
+	-- parent hardpoint first; only after that succeeds is the old component
+	-- removed. The graph therefore never has an intermediate empty hardpoint.
+	local oldDetached: Model? = nil
+	local committed = false
+	local ok = pcall(function()
+		newPart.CFrame = candidateCFrame
+		newPart.Parent = ship
+
+		local replacementGraph = StructuralAuthority.BuildGraph(ship)
+		local replacementParent = replacementGraph.Nodes[oldNode.ParentNodeId :: string]
+		local replacementParentSocket = replacementParent and replacementParent.Sockets[oldNode.ParentSocketId :: string]
+		if not replacementParent or not replacementParentSocket or not replacementParentSocket.IsOccupied then
+			error("replacement hardpoint changed during commit")
+		end
+
+		-- The temporary graph still contains the old edge. Reserve the same
+		-- authoritative hardpoint for the replacement without touching the live
+		-- model yet; the old edge remains live until DetachComponent succeeds.
+		replacementParentSocket.IsOccupied = false
+		replacementParentSocket.ConnectedNodeId = nil
+		replacementParentSocket.ConnectedSocketId = nil
+
+		local existingNewNodeId = newPart:GetAttribute("NodeId")
+		if typeof(existingNewNodeId) == "string" and replacementGraph.Nodes[existingNewNodeId] then
+			error("replacement component already belongs to graph")
+		end
+
+		newPart:SetAttribute("NodeId", "replacement_" .. tostring(newPart:GetDebugId(1)))
+		local childNode = replacementGraph:AttachComponent(replacementParent, replacementParentSocket, newPart, componentType)
+		if not childNode then
+			error("replacement graph attach failed")
+		end
+		ComponentAuthority.Bind(newPart, componentType)
+		ComponentAuthority.SetParent(newPart, replacementParent.Part)
+
+		-- Now detach the old subtree. This is the only destructive operation and
+		-- it occurs after the replacement graph edge is valid.
+		oldDetached = StructuralAuthority.DetachComponent(ship, oldPart, "Replacement")
+		if not oldDetached then
+			error("old component detach failed")
+		end
+
+		committed = true
+	end)
+
+	if not ok or not committed then
+		-- Roll back both instances and their authoritative attributes. If a
+		-- partial debris model was created, restore its parts to their original
+		-- parent before deleting the temporary container.
+		if oldDetached then
+			for _, descendant in ipairs(oldDetached:GetDescendants()) do
+				if descendant:IsA("BasePart") then
+					descendant.Parent = ship
+				end
+			end
+			oldDetached:Destroy()
+		end
+		oldPart.Parent = oldParent
+		oldPart.CFrame = oldCFrame
+		restoreAttributes(oldPart, oldAttrs)
+		newPart.Parent = newParent
+		newPart.CFrame = newCFrame
+		restoreAttributes(newPart, newAttrs)
+		ComponentAuthority.Bind(oldPart, oldAttrs.ComponentType)
+		recomputeShipBody(ship)
 		return nil, false
 	end
 
-	local replacementGraph = StructuralAuthority.BuildGraph(ship)
-	local replacementParent = replacementGraph.Nodes[oldParentId]
-	local replacementSocket = replacementParent and replacementParent.Sockets[oldParentSocketId]
-	if not replacementParent or not replacementSocket or replacementSocket.IsOccupied then
-		local restoredRoot = detached.PrimaryPart or detached:FindFirstChildWhichIsA("BasePart", true)
-		if restoredRoot then
-			detached.Parent = ship
-			restoredRoot.CFrame = oldCFrame
-			for attributeName, attributeValue in pairs(oldAttributes) do
-				restoredRoot:SetAttribute(attributeName, attributeValue)
-			end
-		end
-		recomputeShipBody(ship)
-		return detached, false
-	end
-
-	alignPartToSocket(replacementParent, replacementSocket, newPart, childSocket.LocalOffset)
-	local childNode = replacementGraph:AttachComponent(replacementParent, replacementSocket, newPart, componentType)
-	if childNode then
-		ComponentAuthority.Bind(newPart, componentType)
-		ComponentAuthority.SetParent(newPart, replacementParent.Part)
-		recomputeShipBody(ship)
-		return detached, true
-	end
-
-	if newPart.Parent == ship then
-		newPart.Parent = nil
-	end
-
-	local restoredRoot = detached.PrimaryPart or detached:FindFirstChildWhichIsA("BasePart", true)
-	if restoredRoot then
-		detached.Parent = ship
-		restoredRoot.CFrame = oldCFrame
-		for attributeName, attributeValue in pairs(oldAttributes) do
-			restoredRoot:SetAttribute(attributeName, attributeValue)
-		end
-		if typeof(oldAttributes.ComponentType) == "string" then
-			ComponentAuthority.Bind(restoredRoot, oldAttributes.ComponentType)
-		end
-	end
-
 	recomputeShipBody(ship)
-	return detached, false
+	return oldDetached, true
 end
 
 return StructuralAuthority

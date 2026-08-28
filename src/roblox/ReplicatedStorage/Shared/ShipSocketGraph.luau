@@ -48,29 +48,22 @@ export type SnapCandidate = {
 	ChildSocketName: string,
 }
 
-local function getSocketNormal(offsetName: string): Vector3
-	if string.find(offsetName, "Front", 1, true) then
-		return Vector3.new(0, 0, 1)
-	elseif string.find(offsetName, "Back", 1, true) then
-		return Vector3.new(0, 0, -1)
-	elseif string.find(offsetName, "Left", 1, true) then
-		return Vector3.new(-1, 0, 0)
-	elseif string.find(offsetName, "Right", 1, true) then
-		return Vector3.new(1, 0, 0)
-	elseif string.find(offsetName, "Hex1", 1, true) then
-		return Vector3.new(1, 0, 0)
-	elseif string.find(offsetName, "Hex2", 1, true) then
-		return Vector3.new(0.5, 0, 0.866)
-	elseif string.find(offsetName, "Hex3", 1, true) then
-		return Vector3.new(-0.5, 0, 0.866)
-	elseif string.find(offsetName, "Hex4", 1, true) then
-		return Vector3.new(-1, 0, 0)
-	elseif string.find(offsetName, "Hex5", 1, true) then
-		return Vector3.new(-0.5, 0, -0.866)
-	elseif string.find(offsetName, "Hex", 1, true) then
-		return Vector3.new(0.5, 0, -0.866)
+local function getAuthoritativeSocketDirection(localOffset: Vector3, socketType: "InConnect" | "OutConnect"): Vector3?
+	-- Connection coordinates are the authoritative hardpoint data. Do not
+	-- synthesize direction from names (Front/Back/Hex/etc.); when a hardpoint
+	-- is non-zero its outward/inward normal is derived from the actual local
+	-- hardpoint vector. Zero-length hardpoints have no recoverable direction
+	-- and therefore fail closed.
+	local magnitude = localOffset.Magnitude
+	if magnitude <= 0 then
+		return nil
 	end
-	return Vector3.new(0, 0, 1)
+
+	local outward = localOffset / magnitude
+	if socketType == "InConnect" then
+		return -outward
+	end
+	return outward
 end
 
 local function makeSocket(id: string, socketType: "InConnect" | "OutConnect", localOffset: Vector3, localDirection: Vector3): SocketInfo
@@ -116,7 +109,10 @@ function ShipSocketGraph:ExtractComponentSockets(compTypeName: string): { [strin
 				offset = connectionDefinition.MeshAttachmentPositions["InConnect_" .. tostring(index)] or offset
 			end
 			if offset then
-				sockets[socketId] = makeSocket(socketId, "InConnect", offset, getSocketNormal(positionName))
+				local direction = getAuthoritativeSocketDirection(offset, "InConnect")
+				if direction then
+					sockets[socketId] = makeSocket(socketId, "InConnect", offset, direction)
+				end
 			end
 		end
 	end
@@ -129,7 +125,10 @@ function ShipSocketGraph:ExtractComponentSockets(compTypeName: string): { [strin
 			offset = connectionDefinition.MeshAttachmentPositions.OutConnect or offset
 		end
 		if offset then
-			sockets[socketId] = makeSocket(socketId, "OutConnect", offset, -getSocketNormal(positionName))
+			local direction = getAuthoritativeSocketDirection(offset, "OutConnect")
+			if direction then
+				sockets[socketId] = makeSocket(socketId, "OutConnect", offset, direction)
+			end
 		end
 	end
 

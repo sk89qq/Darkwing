@@ -64,11 +64,23 @@ Status: **IMPLEMENTED — PARTIAL FORENSIC RECOVERY; ROBLOX RUNTIME PENDING**.
 
 Status: **IMPLEMENTED — RAW EQUATIONS RECOVERED; ROBLOX MAPPING PARTIAL**.
 
+### P0.6 — Complete native game-variable authority
+- Added `Shared/Combat/NativeGameplayConfig.luau` as the runtime projection of the complete **235/235** source-resolved native configuration vector.
+- Restored the 18 keys that were absent from the intermediate 217-key runtime table: `USE_TRAILS`, `FIGHTER_VISION`, `TEAM_SELECTION_SPEEDUP`, `FULL_MISSION_SET`, `WAIT_FOR_PLAYERS`, `KEEP_TEAM_COLOURS`, `FOG_OF_WAR_ON`, `USE_MODELS`, `BOTS`, `AUTOAIM`, `SALVOAIM`, `FIXEDAIM`, `ANGLESET`, `PEDROS_REPAIR_MODE`, `SHIP_PERSISTENCE`, `CLIENT_SIDE_DRAGGING`, `MISSION_VOTES`, and `MUTATOR_VOTES`.
+- `NativeParameterResolver` now loads the native table at module initialization, preserves source provenance, hard-fails missing lookups, exposes `Get`, `Has`, `GetAll`, and validates the expected 235-entry coverage.
+- `NativeWeaponConfig` now resolves contract status against the authoritative native resolver instead of reporting all parameters as pending.
+- Added `Shared/Combat/NativeWeaponRuntime.luau` as the explicit weapon consumer boundary. Native time values use the source-confirmed `oq.l = 50` conversion; unresolved damage/force/speed conversion remains intentionally isolated.
+- No native value is silently replaced with a prototype/Roblox value by these modules.
+
+Status: **IMPLEMENTED — 235/235 STATIC AUTHORITY; CONSUMER MIGRATION IN PROGRESS**.
+
 ## Remaining P0
 
-1. Recover exact native-to-Roblox unit conversion and call-site mapping for `anb` physics before parity claims.
+1. Wire `NativeWeaponRuntime` into the live weapon controller for all source-confirmed weapon timing/energy consumers, replacing prototype `FireRate`/`Cooldown`/`PowerPerShot` fallbacks.
 2. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
-3. Port MissionCondition/MissionAction instead of expanding Arena-only orchestration.
+3. Recover exact native-to-Roblox unit conversion and call-site mapping for `anb` physics before parity claims.
+4. Port MissionCondition/MissionAction and the recovered per-mode MissionBuilder/MissionControl sequencing instead of expanding Arena-only orchestration.
+5. Complete native 56-slot component reconciliation, retaining `RAW-GAP`/`INFERRED` status for generated slots without direct source evidence.
 
 ## Remaining P1
 
@@ -78,6 +90,7 @@ Status: **IMPLEMENTED — RAW EQUATIONS RECOVERED; ROBLOX MAPPING PARTIAL**.
 - Audit lifecycle connection cleanup.
 - Replace hot-loop `workspace:GetDescendants()` scans with indexed registries/spatial queries.
 - Verify all DataStore schemas are primitive-only and versioned.
+- Replace any prototype tuning literals only after the corresponding native semantic mapping is source-backed.
 
 ## Source-truth rule
 

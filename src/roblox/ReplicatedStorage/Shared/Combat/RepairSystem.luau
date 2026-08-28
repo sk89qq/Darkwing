@@ -2,7 +2,8 @@
 	RepairSystem
 
 	Recovered native configuration is authoritative. Values are supplied through
-	NativeParameterResolver; no prototype tuning is used when a native key exists.
+	NativeParameterResolver in the native source domain. No Roblox-unit conversion
+	is performed here; execution conversion belongs to a later adapter.
 ]=]
 
 local ComponentAuthority = require(script.Parent:WaitForChild("ComponentAuthority"))
@@ -34,15 +35,15 @@ end
 
 function RepairSystem.NativeConfig(): Config
 	return {
-		REPAIR_MODE_COOLDOWN = native("REPAIR_MODE_COOLDOWN") / 50,
-		REPAIR_MODE_ACTIVE_TIME = native("REPAIR_MODE_ACTIVE_TIME") / 50,
+		REPAIR_MODE_COOLDOWN = native("REPAIR_MODE_COOLDOWN"),
+		REPAIR_MODE_ACTIVE_TIME = native("REPAIR_MODE_ACTIVE_TIME"),
 		REPAIR_MODE_RADIUS = native("REPAIR_MODE_RADIUS"),
 		REPAIR_MODE_POWER = native("REPAIR_MODE_POWER"),
-		PLAYER_REPAIR_TIME = native("PLAYER_REPAIR_TIME") / 50,
+		PLAYER_REPAIR_TIME = native("PLAYER_REPAIR_TIME"),
 		PLAYER_REPAIR_AMOUNT = native("PLAYER_REPAIR_AMOUNT"),
-		AI_REPAIR_TIME = native("AI_REPAIR_TIME") / 50,
+		AI_REPAIR_TIME = native("AI_REPAIR_TIME"),
 		AI_REPAIR_AMOUNT = native("AI_REPAIR_AMOUNT"),
-		FIGHTER_REPAIR_TIME = native("FIGHTER_REPAIR_TIME") / 50,
+		FIGHTER_REPAIR_TIME = native("FIGHTER_REPAIR_TIME"),
 		FIGHTER_REPAIR_AMOUNT = native("FIGHTER_REPAIR_AMOUNT"),
 	}
 end

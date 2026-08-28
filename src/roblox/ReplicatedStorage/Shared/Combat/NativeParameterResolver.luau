@@ -1,10 +1,15 @@
+--!strict
 --[=[
 	NativeParameterResolver
 
-	Maps source-confirmed Void Hunters parameter keys to an explicit runtime
-	configuration table. A missing native value is a hard lookup miss; this
-	module never silently substitutes a Roblox/prototype value.
+	Single runtime authority for source-confirmed Void Hunters native parameters.
+	NativeGameplayConfig is the complete 235-key source-resolved default vector.
+	This resolver exposes those values without silently falling back to Roblox or
+	prototype tuning. Consumer-specific unit conversion belongs outside this
+	module and must remain explicitly documented.
 ]=]
+
+local NativeGameplayConfig = require(script.Parent:WaitForChild("NativeGameplayConfig"))
 
 local NativeParameterResolver = {}
 
@@ -16,6 +21,11 @@ export type Result = {
 
 local values: { [string]: any } = {}
 local provenance: { [string]: string } = {}
+
+for nativeKey, value in pairs(NativeGameplayConfig) do
+	values[nativeKey] = value
+	provenance[nativeKey] = "VOIDA/DEFINITIVE_VALUES/native_configuration_values.csv"
+end
 
 function NativeParameterResolver.Set(nativeKey: string, value: any, source: string)
 	assert(typeof(nativeKey) == "string" and nativeKey ~= "", "native parameter key required")
@@ -42,6 +52,24 @@ end
 
 function NativeParameterResolver.GetProvenance(nativeKey: string): string?
 	return provenance[nativeKey]
+end
+
+function NativeParameterResolver.Has(nativeKey: string): boolean
+	return values[nativeKey] ~= nil
+end
+
+function NativeParameterResolver.Get(nativeKey: string): any
+	local result = NativeParameterResolver.Resolve(nativeKey)
+	assert(result.Status == "RESOLVED", "missing native parameter: " .. nativeKey)
+	return result.Value
+end
+
+function NativeParameterResolver.GetAll(): { [string]: any }
+	local snapshot: { [string]: any } = {}
+	for nativeKey, value in pairs(values) do
+		snapshot[nativeKey] = value
+	end
+	return snapshot
 end
 
 return NativeParameterResolver

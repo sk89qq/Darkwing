@@ -1,16 +1,16 @@
 # VOIDA/09 — Authority Census
 
-**Date:** 2026-08-26  
+**Date:** 2026-08-28  
 **Status:** IMPLEMENTED / STATIC CODE CENSUS  
 **Scope:** repository-wide structural/combat/persistence/network authority tracing before gameplay changes.
 
 ## 0. Audit method and limits
 
-The repository was inspected from the recursive `main` tree and the authority-critical Luau modules were traced directly. GitHub code-search can report incomplete results, so search-index absence is never treated as proof of absence.
+The repository and the supplied project bundle were inspected from the authority-critical Luau modules and the preserved original-JAR bytecode dumps. GitHub code-search can report incomplete results, so search-index absence is never treated as proof of absence.
 
 No Roblox Studio runtime/acceptance run is currently available. This document therefore records **code findings and migration state**, not final behavioral verification.
 
-The raw `voidhunters_decompiled` package remains the first-pass forensic authority. `ROBLOX-MAPPING` and `INFERRED` values must not be promoted to `VERIFIED` without source/runtime evidence.
+The raw `voidhunters` package remains the first-pass forensic authority. `ROBLOX-MAPPING` and `INFERRED` values must not be promoted to `VERIFIED` without source/runtime evidence.
 
 ---
 
@@ -40,9 +40,9 @@ Do not introduce subsystem-local authoritative copies of these domains.
 - Hull classification uses `IsHull` definition metadata.
 - Enemy lookup uses `ShipRegistry.GetAll()` in migrated paths.
 - `ComponentAuthority` fails closed when `ComponentType` is absent/invalid.
-- `ShipSocketGraph` no longer invents generic fallback sockets.
+- `ShipSocketGraph` no longer invents generic socket positions or name-based socket normals.
 - `ShipSocketGraph` requires authoritative component definitions and explicit graph relationships.
-- `StructuralAuthority.ReplaceComponent` validates before detach and restores the previous state on failed replacement.
+- `StructuralAuthority.ReplaceComponent` validates before destructive mutation and installs the replacement on the same authoritative hardpoint before detaching the old subtree; failure rolls back touched state.
 - Blueprint construction/persistence is consolidated around `VoidHunterBuilderServer`.
 - Shield identity/configuration is definition-driven.
 - Capacitor configuration is definition-driven.
@@ -55,62 +55,63 @@ Do not introduce subsystem-local authoritative copies of these domains.
 
 # 3. Remaining P0 / source-recovery work
 
-## P0.1 Exact native destruction operator
+## P0.1 Component HP authority
 
-The raw reference identifies `anb.java` as the native physical body source and `nbb.java` as debris specialization. The supplied decompile still has CFR gaps in major physics methods.
+The former compatibility HP maps have been removed from the migrated combat path. `ComponentAuthority` is the sole runtime component-health authority.
 
-Required before claiming source parity:
-- recover exact detach/separation force;
-- recover momentum/angular-velocity transfer semantics;
-- recover debris lifetime/persistence/cleanup;
-- recover exact collision/body removal sequence;
-- compare multiple decompiler outputs or inspect bytecode where CFR remains unstructured.
+Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
 
-Status: **RAW-GAP**.
+## P0.2 Authoritative hardpoints
 
-## P0.2 Exact physics constants/equations
+The socket solver now consumes explicit connection definitions and mesh attachment coordinates. Name-derived direction fallback was removed; unknown definitions and zero-length hardpoints fail closed.
 
-`RigidBody2D` is the canonical Roblox logical solver, but its constants remain a mixture of recovered values and Roblox mappings. Exact native `anb` equations/constants must be source-traced before final parity is claimed.
+Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
+
+## P0.3 Atomic structural replacement
+
+Replacement now validates the occupied parent hardpoint and replacement socket before destructive mutation, commits the replacement edge first, then detaches the old subtree. Touched instance state is snapshotted for rollback.
+
+Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
+
+## P0.4 Exact native destruction operator
+
+The raw reference identifies `anb.java` as the native physical body source and `nbb.java` as debris specialization. Targeted `javap` recovery now establishes exact `ge.c = 4` and `tua.a = 4` shifts used by `anb.KB`, while `wf.e = 12` is already preserved in the canonical physics inputs. Remaining fixed-point conversion and full destruction/launch semantics are still source-recovery work.
+
+Status: **RAW-GAP / PARTIALLY RECOVERED**.
+
+## P0.5 Exact physics constants/equations
+
+Native operator inputs and several fixed-point shifts are now preserved in `PhysicsConfig`, but the complete `anb` integration/unit-conversion chain is not yet proven equivalent to the Roblox solver.
 
 Status: **RAW-GAP / ROBLOX-MAPPING**.
 
-## P0.3 Debris manager replacement
+## P0.6 Debris manager replacement
 
-The current `VoidHunterDebrisManager` still contains legacy behavior that randomly chooses a component type and writes `ComponentName`. That is not compatible with forensic destruction semantics, where debris should correspond to the component actually detached/destroyed.
-
-Required replacement:
-- accept explicit destroyed component identity/state from `StructuralAuthority`/`ComponentAuthority`;
-- preserve source-backed component type/metadata;
-- use `task.*` timing correctly;
-- route collection through canonical inventory/persistence;
-- do not fabricate random component types.
+The current debris path still requires complete source-backed destroyed-component identity, native launch/persistence semantics, and canonical collection behavior.
 
 Status: **ACTIVE / LEGACY**.
 
-## P0.4 Component-to-geometry hit resolution
+## P0.7 Component-to-geometry hit resolution
 
-Projectile collision must resolve the actual impacted component from geometry before damage is applied. The existing Roblox collision surface is not yet proven equivalent to the native polygon model.
-
-Required path:
-`collision -> world hit -> component geometry -> ComponentAuthority.ApplyDamage()`.
+Projectile collision must resolve the actual impacted component from geometry before damage is applied. This remains unverified against the native polygon model.
 
 Status: **ACTIVE / NOT VERIFIED**.
 
-## P0.5 Mission framework
+## P0.8 Mission framework
 
 Port `MissionCondition` / `MissionAction` semantics rather than expanding Arena-specific logic.
 
 Status: **ACTIVE**.
 
-## P0.6 Provenance cleanup
+## P0.9 Provenance cleanup
 
 Any static table or conversion value lacking raw traceability must be marked `RAW-GAP` or `INFERRED` rather than `CODE_VERIFIED`.
 
 Status: **ACTIVE**.
 
-## P0.7 Compatibility facades
+## P0.10 Compatibility facades
 
-`VoidHunterBlueprintSystem` and `VoidHunterSyncManager` are treated as superseded compatibility layers. Delete them only after complete caller enumeration proves there are no live production callers.
+`VoidHunterBlueprintSystem` and `VoidHunterSyncManager` remain superseded compatibility layers pending complete caller enumeration and safe deletion.
 
 Status: **SUPERSEDED / PENDING DELETION**.
 
@@ -125,6 +126,7 @@ The raw reference confirms:
 - `anb.java` stores physical body state including position, velocity, angle, angular velocity, center of mass, mass, moment of inertia, and root state.
 - `nbb.java` specializes debris behavior.
 - `summary.txt` reports CFR gaps in several major methods.
+- Targeted bytecode confirms `ge.c = 4` and `tua.a = 4`.
 
 Do not replace the native operator set with inferred Roblox approximations when the raw behavior is recoverable.
 

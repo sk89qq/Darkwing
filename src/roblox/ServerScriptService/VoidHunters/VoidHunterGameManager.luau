@@ -3,29 +3,58 @@
 
 local vhGameManager = {}
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
 local WaveManager = require(game.ServerScriptService.VoidHunters:WaitForChild("VoidHunterWaveManager"))
-local AsteroidSpawner = require(game.ServerScriptService.VoidHunters:WaitForChild("AsteroidSpawner"))
-local SyncManager = require(game.ServerScriptService.VoidHunters:WaitForChild("VoidHunterSyncManager"))
 
-local States = { Lobby = "Lobby", Intermission = "Intermission", Active = "Active", GameOver = "GameOver" }
+local States = {
+	Lobby = "Lobby",
+	Intermission = "Intermission",
+	Active = "Active",
+	GameOver = "GameOver",
+}
+
 local currentState = States.Lobby
-local HUDController = nil  -- injected after init to avoid circular require
+local HUDController = nil -- injected after init to avoid circular require
+local initialized = false
 
-local INTERMISSION_DURATION = 5  -- shortened: players see countdown then arena starts
+local INTERMISSION_DURATION = 5
 local GAME_OVER_DURATION = 8
 
-function vhGameManager.SetState(newState)
-	if currentState == newState then return end
-	print(string.format("[GameManager] %s -> %s", currentState, newState))
+-- Workspace.GameState is a public mirror of the server-authoritative state.
+-- The Lua value remains authoritative; the attribute exists for diagnostics/UI.
+local function publishState(state: string)
+	game.Workspace:SetAttribute("GameState", state)
+end
+
+function vhGameManager.SetState(newState: string)
+	assert(
+		newState == States.Lobby
+			or newState == States.Intermission
+			or newState == States.Active
+			or newState == States.GameOver,
+		"[GameManager] Invalid game state: " .. tostring(newState)
+	)
+
+	local previousState = currentState
 	currentState = newState
-	game.Workspace:SetAttribute("GameState", newState)
+	publishState(newState)
+
+	if previousState ~= newState then
+		print(string.format("[GameManager] %s -> %s", previousState, newState))
+	end
 end
 
 function vhGameManager.GetState()
 	return currentState
+end
+
+function vhGameManager.GetStates()
+	return States
+end
+
+function vhGameManager.IsState(state: string): boolean
+	return currentState == state
 end
 
 function vhGameManager.InjectHUD(hud)
@@ -38,14 +67,17 @@ local function onActive()
 	WaveManager.RunSession(vhGameManager, HUDController)
 end
 
-local function onGameOver(victory)
-	-- Cleanup
+local function onGameOver(_victory)
 	WaveManager.Reset()
 	if game.Workspace:FindFirstChild("Enemies") then
-		for _, e in ipairs(game.Workspace.Enemies:GetChildren()) do e:Destroy() end
+		for _, e in ipairs(game.Workspace.Enemies:GetChildren()) do
+			e:Destroy()
+		end
 	end
 	if game.Workspace:FindFirstChild("Asteroids") then
-		for _, a in ipairs(game.Workspace.Asteroids:GetChildren()) do a:Destroy() end
+		for _, a in ipairs(game.Workspace.Asteroids:GetChildren()) do
+			a:Destroy()
+		end
 	end
 	task.wait(GAME_OVER_DURATION)
 	vhGameManager.SetState(States.Lobby)
@@ -63,7 +95,6 @@ local function onIntermission()
 	vhGameManager.SetState(States.Active)
 end
 
--- Main loop: watches for first player join to auto-start, monitors ship survival
 local intermissionRunning = false
 local gameOverRunning = false
 
@@ -74,7 +105,6 @@ task.spawn(function()
 		if currentState == States.Lobby then
 			intermissionRunning = false
 			gameOverRunning = false
-			-- Auto-start when at least 1 player is in the game
 			if pCount > 0 then
 				vhGameManager.SetState(States.Intermission)
 			end
@@ -86,8 +116,7 @@ task.spawn(function()
 			end
 
 		elseif currentState == States.Active then
-			onActive()  -- RunSession is guarded by sessionActive flag, safe to call here
-			-- Monitor: if all players leave or all ships gone, end game
+			onActive()
 			if pCount == 0 then
 				vhGameManager.SetState(States.GameOver)
 			end
@@ -104,6 +133,13 @@ task.spawn(function()
 end)
 
 function vhGameManager.Init()
+	if initialized then
+		-- Idempotent initialization: always republish the authoritative state.
+		publishState(currentState)
+		return
+	end
+
+	initialized = true
 	vhGameManager.SetState(States.Lobby)
 	print("[GameManager] Initialized. Waiting for players.")
 end

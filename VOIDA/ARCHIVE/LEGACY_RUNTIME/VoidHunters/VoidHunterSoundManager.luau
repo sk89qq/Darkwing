@@ -1,0 +1,5 @@
+-- ARCHIVED LEGACY PROTOTYPE
+-- Original active path: src/roblox/ReplicatedStorage/VoidHunters/VoidHunterSoundManager.luau
+-- Source SHA: f30cce24d16d571ec7ea22246faec5a1e0b2ff04
+-- Reason archived: legacy prototype sound-ID/volume implementation; no forensic asset parity established.
+-- The complete historical source remains recoverable from the source blob SHA above.

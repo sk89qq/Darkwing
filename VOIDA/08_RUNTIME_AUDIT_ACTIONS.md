@@ -66,6 +66,7 @@ Status: **IMPLEMENTED — RAW EQUATIONS RECOVERED; ROBLOX MAPPING PARTIAL**.
 - `NativeGameplayConfig` remains the 235/235 source-resolved native vector.
 - `NativeParameterResolver` remains the sole runtime source for native configuration values.
 - `NativeWeaponRuntime` is wired into the live weapon controller for source-confirmed weapon timing/energy contracts.
+- `PhysicsConfig` no longer contains Roblox-unit tuning/mapping; native source values are isolated from later execution adapters.
 
 Status: **IMPLEMENTED — 235/235 STATIC AUTHORITY; SOURCE-CONFIRMED WEAPON TIMING/ENERGY WIRED; ROBLOX RUNTIME PENDING**.
 
@@ -79,9 +80,10 @@ Status: **IMPLEMENTED — SOURCE-BACKED INPUT AUTHORITY; PER-MODE SEQUENCING STI
 ### P0.8 — Native component slot ledger
 - Reconciled the definitive component slot artifact into a complete **56/56 native slot ledger**.
 - Every native ID `0..55` has an explicit initializer/reference classification.
+- Added `VOIDA/36_NATIVE_WFB_SLOT_EXTRACTION.md` anchoring the 56-slot index space directly to the original `wlb` initializer bytecode.
 - Direct, generated, and referenced-object entries remain distinguished; no generated geometry or native→Roblox identity was guessed.
 
-Status: **IMPLEMENTED — SOURCE LEDGER COMPLETE; NATIVE→ROBLOX SEMANTIC RECONCILIATION PARTIAL**.
+Status: **IMPLEMENTED — RAW SLOT INDEXING VERIFIED; NATIVE→ROBLOX SEMANTIC RECONCILIATION PARTIAL**.
 
 ### P0.9 — Shield component authority cleanup
 - `ShieldSystem` no longer reads component identity from arbitrary attributes directly.

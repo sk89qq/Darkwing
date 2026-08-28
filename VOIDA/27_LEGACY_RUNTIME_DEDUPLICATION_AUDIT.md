@@ -13,12 +13,12 @@ The nested `VoidHunters` directory contained an older prototype generation that 
 |---|---|---|---|
 | `src/roblox/ReplicatedStorage/VoidHunters/VoidHunterWeaponController.luau` | Prototype combat controller | `Shared/Combat/ComponentAuthority`, `Shared/Combat/StructuralAuthority`, native weapon runtime | SUPERSEDED |
 | `src/roblox/ReplicatedStorage/VoidHunters/VoidHunterComponents.luau` | 13-type prototype component table with inferred combat tuning | `src/roblox/ReplicatedStorage/VoidHunterComponents.luau` + structural authority | SUPERSEDED |
-| `src/roblox/ReplicatedStorage/VoidHunters/VoidHunterSoundManager.luau` | Prototype Roblox-library audio implementation | forensic asset/audio workstream | SUPERSEDED / UNVERIFIED |
+| `src/roblox/ReplicatedStorage/VoidHunters/VoidHunterSoundManager.luau` | Prototype Roblox-library audio implementation | canonical inert presentation hook pending forensic audio recovery | SUPERSEDED |
 | `src/roblox/ReplicatedStorage/VoidHunters/ShipSocketGraph.luau` | Duplicate re-export facade | `Shared/ShipSocketGraph` | SUPERSEDED |
 
 ## Reference sweep — 2026-08-28 retry
 
-The live nested `src/roblox/ReplicatedStorage/VoidHunters` path was queried directly after the deletions and returns **404 / Not Found**, confirming that the deleted runtime directory is no longer present.
+The legacy controller/component/socket/audio implementations were removed from the active runtime surface and their provenance preserved under `VOIDA/ARCHIVE/LEGACY_RUNTIME/VoidHunters/`.
 
 Repository code-search sweeps were run for the deleted controller path, `VoidHunterComponents`, `VoidHunterSoundManager`, the legacy archive path, the old `require(ReplicatedStorage.VoidHunters` pattern, `partHP`, `shipEnergy`, and `ComponentAuthority`. The repository search endpoint returned no indexed matches for those queries. Because GitHub's code-search index can be incomplete, that result is recorded as an audit signal rather than proof of zero textual references.
 
@@ -38,16 +38,17 @@ The live `ServerScriptService/VoidHunterWeaponController.luau` was re-read after
 2. **Combat HP:** old controller maintained private `partHP`; this conflicts with canonical `ComponentAuthority` state.
 3. **Weapon state:** the active controller keeps only per-instance last-fire timestamps; source-resolved reload/energy values now come from `NativeWeaponRuntime` for all recovered native contracts.
 4. **Socket graph:** nested file was only a re-export, so retaining it created an unnecessary second import surface.
-5. **Audio:** old sound IDs/volumes are prototype choices and have not been source-verified; retaining them as runtime truth would violate the forensic completion policy.
+5. **Audio:** prototype sound IDs/volumes remain non-authoritative. The active controller's existing `PlayWeapon` calls are now backed by a strict inert compatibility shim that owns no gameplay state and performs no audio I/O.
 6. **Shield:** `ShieldSystem` still owns its live shield state because no separate source-verified shield authority has yet been established; its absorption/reboot constants remain explicitly `[INFERRED]`.
 
-## Newly identified runtime defect
+## Audio dependency resolution — 2026-08-28
 
-The active weapon controller still imports `ReplicatedStorage.VoidHunters:WaitForChild("VoidHunterSoundManager")`, while the entire `ReplicatedStorage/VoidHunters` runtime directory was intentionally deleted. This is a stale legacy import and must be removed or migrated to a canonical audio boundary before the controller can be considered runtime-clean. Do not resurrect the archived prototype sound manager as gameplay truth.
+Implemented a canonical runtime compatibility boundary at `src/roblox/ReplicatedStorage/VoidHunters/VoidHunterSoundManager.luau` solely to satisfy the existing presentation hook while forensic audio assets remain unresolved.
+
+The shim exposes the existing `PlayWeapon(weaponType, position)` contract, performs no audio I/O, stores no gameplay state, and contains no prototype asset IDs or tuning. This keeps the active weapon controller executable without restoring the superseded prototype audio implementation.
 
 ## Remaining reconciliation targets
 
-- Remove/migrate the stale `VoidHunterSoundManager` import and calls without restoring prototype audio IDs as authoritative data.
 - Audit Arena/PvP managers for private copies of shield, capacitor, respawn, and match-state values.
 - Recover the original shield configuration/control-flow consumers before replacing the explicitly inferred `ShieldSystem` model.
 - Audit `SharedSource`/`ClientSource` mirrors separately; these may be forensic source mirrors rather than runtime duplicates and must not be deleted merely because names overlap.
@@ -55,4 +56,4 @@ The active weapon controller still imports `ReplicatedStorage.VoidHunters:WaitFo
 
 ## Verification rule
 
-This cleanup establishes **runtime deduplication**, not forensic parity. It does not upgrade inferred shield/audio/physics behavior to VERIFIED.
+This cleanup establishes runtime deduplication and executable dependency closure. It does not upgrade inferred shield/audio/physics behavior to VERIFIED.

@@ -1,4 +1,4 @@
-# VOIDA Runtime Audit Actions — 2026-08-26
+# VOIDA Runtime Audit Actions — 2026-08-28
 
 ## Authoritative source
 - Raw supplied archive: `/VOIDA/voidhunters_decompiled_raw.zip` in Library.
@@ -23,21 +23,36 @@
 - AutoBuild routes attachment through `StructuralAuthority`.
 - Legacy `Components` input remains a migration input only; new saves use V2.
 
-### Provenance corrections from raw package
-- Raw `wfb/lw/eo` health derivation is source-specific; simplified square-root helpers are not treated as exact raw behavior.
-- `wlb.java` initializes 56 definition slots, but many slots are generated from dependent expressions and must not be reduced to guessed literals.
-- CFR-unstructured methods remain `RAW-GAP` until reconstructed from bytecode or better decompilation.
-- Any generated data entry without direct raw provenance must remain `RAW-GAP` / `INFERRED` rather than `[CODE_VERIFIED]`.
+### P0.1 — Component HP authority
+- Combat/PvP/repair callers use `ComponentAuthority` rather than subsystem-local `partHealth` / `partMaxHealth` state.
+- Static caller audit found no remaining live compatibility HP maps in the migrated combat path.
+- Runtime Studio verification remains separate.
+
+Status: **IMPLEMENTED — STATIC VERIFIED**.
+
+### P0.2 — Authoritative hardpoints
+- `ShipSocketGraph` consumes explicit `Components.Connections` and `MeshAttachmentPositions` hardpoint data.
+- Unknown component definitions fail closed.
+- Name-derived Front/Back/Hex socket-direction fallback was removed.
+- Hardpoint direction is derived only from the supplied local hardpoint coordinate; zero-length hardpoints fail closed.
+- Welds/proximity are not used as logical topology discovery.
+
+Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
+
+### P0.3 — Atomic structural replacement
+- `StructuralAuthority.ReplaceComponent` now validates the occupied parent hardpoint and replacement socket before destructive mutation.
+- Replacement is committed to the same authoritative hardpoint before the old component is detached.
+- Failure rolls back the touched instances and authoritative attributes rather than reconstructing the old state from a detached debris projection.
+- Logical graph mutation remains inside `StructuralAuthority`.
+
+Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
 
 ## Remaining P0
 
-1. Remove remaining `partHealth` / `partMaxHealth` compatibility access from combat after callers are migrated to `ComponentAuthority` directly.
-2. Replace generic socket fallback with authoritative hardpoints; unknown definitions fail closed.
-3. Make replacement atomic at the hardpoint/graph level.
-4. Recover exact detach force, momentum carry-over, debris persistence, and cleanup semantics before inventing policy.
-5. Recover exact `anb` mass/COM/inertia/update equations before parity claims.
-6. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
-7. Port MissionCondition/MissionAction instead of expanding Arena-only orchestration.
+1. Recover exact detach force, momentum carry-over, debris persistence, and cleanup semantics from native `anb` / `nbb` / `ml` behavior.
+2. Recover exact `anb` mass/COM/inertia/update equations and native-to-Roblox unit conversion before parity claims.
+3. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
+4. Port MissionCondition/MissionAction instead of expanding Arena-only orchestration.
 
 ## Remaining P1
 
@@ -47,6 +62,10 @@
 - Audit lifecycle connection cleanup.
 - Replace hot-loop `workspace:GetDescendants()` scans with indexed registries/spatial queries.
 - Verify all DataStore schemas are primitive-only and versioned.
+
+## Source-truth rule
+
+Native source remains authoritative. `VERIFIED` requires an explicit acceptance test and source citation. `ROBLOX-MAPPING` and `INFERRED` values must not be promoted to source truth merely because they are compatible with the reference.
 
 ## Future-agent protocol
 

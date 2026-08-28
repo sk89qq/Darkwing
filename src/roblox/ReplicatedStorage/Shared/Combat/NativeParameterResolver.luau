@@ -19,12 +19,26 @@ export type Result = {
 	Status: "RESOLVED" | "MISSING_NATIVE_VALUE",
 }
 
+local EXPECTED_NATIVE_PARAMETER_COUNT = 235
 local values: { [string]: any } = {}
 local provenance: { [string]: string } = {}
 
 for nativeKey, value in pairs(NativeGameplayConfig) do
 	values[nativeKey] = value
 	provenance[nativeKey] = "VOIDA/DEFINITIVE_VALUES/native_configuration_values.csv"
+end
+
+local function countValues(): number
+	local count = 0
+	for _ in pairs(values) do
+		count += 1
+	end
+	return count
+end
+
+function NativeParameterResolver.ValidateCoverage(): (boolean, number, number)
+	local actual = countValues()
+	return actual == EXPECTED_NATIVE_PARAMETER_COUNT, actual, EXPECTED_NATIVE_PARAMETER_COUNT
 end
 
 function NativeParameterResolver.Set(nativeKey: string, value: any, source: string)

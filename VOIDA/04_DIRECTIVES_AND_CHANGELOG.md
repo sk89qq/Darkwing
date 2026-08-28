@@ -5,118 +5,79 @@ This file tracks received directives, implementation changes, and verification s
 
 ---
 
-## 🛑 Core Engineering Directive: Problem-Solving Triage
+## Core Engineering Directive: Problem-Solving Triage
 **DO NOT SOLVE A PROBLEM TWICE.**
 
 Before implementing any mechanic:
-1. **ASK:** "Does the original client already contain the answer?"
-   - If YES: extract it from the original reference/decompile code and record the source location.
-2. **THEN ASK:** "Does Roblox already provide a mechanism capable of reproducing it?"
-   - If YES: use the native Roblox primitive/API where it preserves the required observable behavior.
-3. **ONLY IF BOTH ANSWERS ARE NO:**
-   - Design custom logic and label it `[INFERRED]` until validated.
-
-This rule is persisted in `AGENTS.md` and applies to every engineering turn.
+1. ASK whether the original client already contains the answer; if yes, extract and cite it.
+2. ASK whether Roblox already provides an equivalent primitive; if yes, use it when behavior is preserved.
+3. ONLY if both are unavailable, design custom logic and label it `[INFERRED]` until validated.
 
 ---
 
-## 🔬 Completion / Verification Policy
-The previous log used `Complete` for phases whose implementations had not been fully audited against the recovered client. That status is retired.
+## Completion / Verification Policy
+Allowed states: EXTRACTED, IMPLEMENTED, VERIFIED, BLOCKED, SUPERSEDED.
 
-A phase may use these states only:
+`VERIFIED` requires an explicit acceptance test and source citation. Code presence or a smoke test is insufficient.
 
-- **EXTRACTED** — reference behavior/data recovered; implementation not yet reconciled.
-- **IMPLEMENTED** — Roblox implementation exists; full forensic parity is not yet demonstrated.
-- **VERIFIED** — implementation has been compared against recovered client behavior for the scoped acceptance tests.
-- **BLOCKED** — required source/resource evidence or runtime verification is missing.
-- **SUPERSEDED** — previous implementation replaced by a later authoritative implementation.
-
-`VERIFIED` requires an explicit acceptance test and source citation. Presence of code, a populated module, or a passing basic smoke test is not sufficient.
-
-Every claim/value must retain its source-truth tag:
-`[CODE_VERIFIED]`, `[ASSET_VERIFIED]`, `[ORIGINAL_DATA_VERIFIED]`, `[ALTERORB_BEHAVIOR_VERIFIED]`, `[DOCUMENTATION_ONLY]`, `[INFERRED]`, `[UNKNOWN]`.
-
-Do not mark inferred Roblox choices as `[CODE_VERIFIED]` merely because they are compatible with the reference.
+Source-truth tags remain mandatory: `[CODE_VERIFIED]`, `[ASSET_VERIFIED]`, `[ORIGINAL_DATA_VERIFIED]`, `[ALTERORB_BEHAVIOR_VERIFIED]`, `[DOCUMENTATION_ONLY]`, `[INFERRED]`, `[UNKNOWN]`.
 
 ---
 
 ## Current Phase Registry
 
-### [Phase 0 - Initialization]
-- **Status:** IMPLEMENTED
-- **Scope:** VOIDA documentation, source-truth rules, baseline project inventory, and development scaffolding.
+### Phase 0 - Initialization
+- Status: IMPLEMENTED
 
-### [Phase 1 - Physics & RigidBody2D Engine]
-- **Status:** IMPLEMENTED
-- **Verification:** PARTIAL
-- **Current state:** A 50 Hz custom 2D rigid-body layer exists with mass points, COM, inertia, force/torque, impulses, damping, and Roblox transform synchronization.
-- **Required before VERIFIED:** audit every numerical constant/formula against the recovered client and distinguish original behavior from Roblox safety/performance policies.
+### Phase 1 - Physics & RigidBody2D Engine
+- Status: IMPLEMENTED / PARTIAL
+- 50 Hz custom 2D rigid-body layer exists; formula-by-formula forensic verification remains open.
 
-### [Phase 2 - Ship Assembly & Socket Graph]
-- **Status:** IMPLEMENTED
-- **Verification:** PARTIAL
-- **Current state:** Recursive graph, socket matching, weld creation, reachability/severance and build-mode snapping exist. `StructuralAuthority` is now the intended mutation boundary.
-- **Required before VERIFIED:** remove remaining generic socket fallbacks and prove hardpoint attach/detach/replacement against reference behavior.
+### Phase 2 - Ship Assembly & Socket Graph
+- Status: IMPLEMENTED / PARTIAL
+- `StructuralAuthority` is the mutation boundary; remaining generic fallbacks require reconciliation.
 
-### [Phase 3 - Tactical Combat, Weapons & Projectile Ballistics]
-- **Status:** IMPLEMENTED
-- **Verification:** PARTIAL
-- **Current state:** Weapon controller now uses `ComponentAuthority` as its health-state boundary and `StructuralAuthority` for component destruction. Shield/capacitor/weapon numerical parity is still not established.
-- **Required before VERIFIED:** reconcile duplicated state in remaining combat/PvP systems and every damage/weapon/energy constant against the recovered client.
+### Phase 3 - Tactical Combat, Weapons & Projectile Ballistics
+- Status: IMPLEMENTED / PARTIAL
+- `ComponentAuthority` and native configuration are authoritative directions; inferred shield/resource behavior remains open.
 
-### [Phase 4 - HUD, Radar & Arena Match Loop]
-- **Status:** IMPLEMENTED
-- **Verification:** PARTIAL
-- **Current state:** Arena match manager and HUD exist; team vocabulary is now Yellow/Blue. This remains the Arena prototype rather than the complete Mission framework.
-- **Required before VERIFIED:** port the original MissionCondition/MissionAction orchestration and verify HUD behavior against archived client evidence.
+### Phase 4 - HUD, Radar & Arena Match Loop
+- Status: IMPLEMENTED / PARTIAL
+- Arena remains a prototype shell until original Mission sequencing is fully ported.
 
-### [Phase 5 - Forensic Port Blueprint Alignment & Definitive Data Models]
-- **Status:** EXTRACTED + IMPLEMENTED
-- **Verification:** PARTIAL
-- **Current state:** Decompiled component/body schemas, category colors, geometry data and debris configuration are present.
-- **Required before VERIFIED:** audit every numeric/table entry against actual source/resource data and resolve remaining decompilation gaps.
+### Phase 5 - Forensic Port Blueprint Alignment & Definitive Data Models
+- Status: EXTRACTED + IMPLEMENTED / PARTIAL
 
-### [Current Workstream - Foundation Structural Reconciliation]
-- **Status:** ACTIVE
-- **Implemented boundaries:**
-  - `ComponentAuthority` = canonical component runtime state.
-  - `StructuralAuthority` = canonical attach/detach/replace/sever boundary.
-  - `ShipSocketGraph` = socket/hardpoint solver/index.
-  - `RigidBody2D` = logical 2D body solver where native Roblox physics is not equivalent.
-  - `TeamIdentity` = shared Yellow/Blue team vocabulary.
-- **Next reconciliation:**
-  1. migrate remaining PvP/repair code away from private component state
-  2. remove generic topology fallbacks
-  3. migrate all replacement/manual detach paths to `StructuralAuthority`
-  4. reconcile shield/power state authority
-  5. reconcile physics constants/formulas
-  6. port MissionCondition/MissionAction framework
+### Current Workstream - Foundation Structural Reconciliation
+- Status: ACTIVE
+- Canonical boundaries: `ComponentAuthority`, `StructuralAuthority`, `Shared/ShipSocketGraph`, `RigidBody2D`, `TeamIdentity`, `NativeParameterResolver`.
 
 ---
 
-## Engineering Rule For Completion Claims
-A directive is **not complete because code exists**.
+## 2026-08-28 — Legacy Runtime Deduplication
 
-For each directive the engineer must record:
+Implemented:
+- archived the nested `src/roblox/ReplicatedStorage/VoidHunters/VoidHunterWeaponController.luau` prototype;
+- archived the nested 13-type `VoidHunterComponents.luau` prototype;
+- archived the nested prototype `VoidHunterSoundManager.luau` because its asset IDs/volumes are not forensic-authoritative;
+- archived the nested `ShipSocketGraph.luau` re-export because the shared graph is authoritative;
+- removed those four legacy entries from the active nested runtime surface;
+- preserved provenance and historical notes under `VOIDA/ARCHIVE/LEGACY_RUNTIME/VoidHunters/`;
+- recorded the root-level `VoidHunterComponents.luau` as the active richer connection/mesh definition surface;
+- added `VOIDA/27_LEGACY_RUNTIME_DEDUPLICATION_AUDIT.md` documenting duplicate-state findings and remaining audit targets.
 
-```text
-SOURCE:
-original class/method/data or archival reference
+Behavioral policy:
+- This cleanup is a **runtime deduplication** change, not a forensic parity claim.
+- Inferred shield/audio/physics behavior remains unverified.
+- Forensic source mirrors and definitive-data files are preserved even when superseded by runtime projections.
 
-CURRENT IMPLEMENTATION:
-file/module/function
-
-BEHAVIORAL DELTA:
-none / known difference / unknown
-
-ACCEPTANCE TEST:
-what must be observed to call the directive VERIFIED
-
-STATUS:
-EXTRACTED | IMPLEMENTED | VERIFIED | BLOCKED | SUPERSEDED
-```
-
-This preserves the existing Roblox/Luau architecture while preventing the documentation layer from claiming forensic parity before it has been demonstrated.
+Next reconciliation:
+1. audit remaining imports for deleted nested paths;
+2. remove private PvP/resource state where a canonical authority exists;
+3. wire native weapon/resource consumers;
+4. reconcile shield state and native shield controls;
+5. reconcile physics conversion boundaries;
+6. complete Mission variable/action/condition sequencing.
 
 ---
 
@@ -132,11 +93,9 @@ Implemented:
 - root/ship destruction no longer fabricates random 40%-HP / 80%-HP clone salvage
 - completion/status language aligned with forensic verification policy
 
-Explicitly NOT declared verified by this change:
+Explicitly NOT declared verified:
 - exact source numerical shield/capacitor values
-- exact critical-flash render threshold in original code
+- exact critical-flash render threshold
 - complete Mission framework parity
 - exact audiovisual asset parity
 - exact decompiled physics formulas where CFR control flow remains unresolved
-
-These remain `PARTIAL`, `UNKNOWN`, or `BLOCKED` until the reference evidence supports them.

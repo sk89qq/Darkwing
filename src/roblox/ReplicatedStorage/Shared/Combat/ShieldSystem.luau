@@ -8,6 +8,8 @@ local CombatTypes = require(ReplicatedStorage.Shared.Combat.CombatTypes)
 local ShieldSystem = {}
 ShieldSystem.__index = ShieldSystem
 
+local shipShields: { [Model]: any } = setmetatable({}, { __mode = "k" })
+
 -- Damage absorption/reboot behavior remains source-unresolved. These modifiers
 -- are retained as explicit inferred behavior rather than being mislabeled native.
 local SHIELD_DAMAGE_MODIFIERS = {
@@ -56,6 +58,26 @@ function ShieldSystem:CalculateFromShip(shipModel: Model)
 	else
 		self.MaxHP, self.CurrentHP, self.IsActive = 0, 0, false
 	end
+	shipShields[shipModel] = self
+	shipModel:SetAttribute("ShieldPercent", self:GetShieldPercent())
+	shipModel:SetAttribute("ShieldHP", self.CurrentHP)
+	shipModel:SetAttribute("ShieldCapacity", self.MaxHP)
+end
+
+function ShieldSystem.RegisterShip(shipModel: Model): any
+	local existing = shipShields[shipModel]
+	if existing then return existing end
+	local shield = ShieldSystem.new()
+	shield:CalculateFromShip(shipModel)
+	return shield
+end
+
+function ShieldSystem.GetForShip(shipModel: Model): any?
+	return shipShields[shipModel]
+end
+
+function ShieldSystem.UnregisterShip(shipModel: Model)
+	shipShields[shipModel] = nil
 end
 
 function ShieldSystem:AbsorbDamage(rawDamage: number, damageType: CombatTypes.DamageType): number

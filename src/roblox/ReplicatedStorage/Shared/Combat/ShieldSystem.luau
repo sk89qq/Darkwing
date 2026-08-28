@@ -4,14 +4,16 @@
 	STATUS: IMPLEMENTED / FORENSIC PARITY PARTIAL
 	The decompiled client confirms directional shield parameters, but the exact
 	control flow and numerical absorption model are not fully recovered here.
-	Therefore the values below are PROTOTYPE/INFERRED, not CODE_VERIFIED.
+	Therefore numerical modifiers and reboot timing remain PROTOTYPE/INFERRED.
 
-	Do not expand this model as if it were original behavior until the source
-	shield behaviour/config consumers are traced.
+	Authority rule:
+	ComponentAuthority is the runtime component-state boundary. This module
+	never classifies components from Instance.Name or from ad-hoc name patterns.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Components = require(ReplicatedStorage:WaitForChild("VoidHunterComponents"))
+local ComponentAuthority = require(script.Parent:WaitForChild("ComponentAuthority"))
 local CombatTypes = require(ReplicatedStorage.Shared.Combat.CombatTypes)
 
 local ShieldSystem = {}
@@ -39,6 +41,15 @@ function ShieldSystem.new(maxHP: number?, regenRate: number?, radius: number?)
 	return self
 end
 
+local function getDefinition(part: BasePart): any?
+	local state = ComponentAuthority.Get(part) or ComponentAuthority.Bind(part)
+	if not state then
+		return nil
+	end
+	local definition = Components.Types[state.TypeName]
+	return type(definition) == "table" and definition or nil
+end
+
 function ShieldSystem:CalculateFromShip(shipModel: Model)
 	local totalShield = 0.0
 	local totalRegen = 0.0
@@ -46,9 +57,8 @@ function ShieldSystem:CalculateFromShip(shipModel: Model)
 
 	for _, part in ipairs(shipModel:GetDescendants()) do
 		if part:IsA("BasePart") and not part:GetAttribute("IsDebris") then
-			local typeName = part:GetAttribute("ComponentType")
-			local definition = typeof(typeName) == "string" and Components.Types[typeName] or nil
-			if type(definition) == "table" then
+			local definition = getDefinition(part)
+			if definition then
 				local capacity = definition.ShieldCapacity
 				local regen = definition.ShieldRegen
 				local radius = definition.ShieldRadius

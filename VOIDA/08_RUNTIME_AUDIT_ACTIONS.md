@@ -26,7 +26,6 @@
 ### P0.1 — Component HP authority
 - Combat/PvP/repair callers use `ComponentAuthority` rather than subsystem-local `partHealth` / `partMaxHealth` state.
 - Static caller audit found no remaining live compatibility HP maps in the migrated combat path.
-- Runtime Studio verification remains separate.
 
 Status: **IMPLEMENTED — STATIC VERIFIED**.
 
@@ -51,7 +50,6 @@ Status: **IMPLEMENTED — STATIC VERIFIED; ROBLOX RUNTIME PENDING**.
 - Native `anb` accumulator transfer, `nbb.G` split-state transfer, and `ml.DA` randomized debris-launch structure are recovered and documented.
 - Native launch constants `FULL_TURN_UNITS=8192`, `HALF_TURN_UNITS=4096`, `RANDOM_RANGE=200`, and `RANDOM_OFFSET=100` are mapped in `NativeDebrisPhysics`.
 - Additional recovered destruction/launch scalar constants `256` and `32768` are recorded with their native operator scope.
-- Detached-body point-kinematic inheritance remains implemented through `RigidBody2D`.
 - Exact fixed-point/unit conversion, complete call-site application of recovered scalars, debris persistence/cleanup semantics, and Roblox runtime parity remain open.
 
 Status: **IMPLEMENTED — PARTIAL FORENSIC RECOVERY; ROBLOX RUNTIME PENDING**.
@@ -60,7 +58,6 @@ Status: **IMPLEMENTED — PARTIAL FORENSIC RECOVERY; ROBLOX RUNTIME PENDING**.
 - Original JAR bytecode directly verified `ge.c=4`, `tua.a=4`, `wf.e=12`, and `ou.r=8`.
 - Native mass aggregation, mass-weighted COM accumulation, polygon-vertex inertia accumulation, point-force torque accumulation, and linear/angular accumulator integration are recovered and recorded in `VOIDA/27_NATIVE_ANB_EQUATIONS_RECOVERY.md`.
 - Added `Shared/Physics/NativeAnbPhysics.luau` as an integer-domain equation layer; it intentionally performs no unverified native-to-Roblox unit conversion.
-- Corrected the prior attribution: `lw.a(byte,int)` is a trigonometric lookup helper used by `wfb`, not the native-to-Roblox unit converter.
 - Exact native-to-Roblox unit conversion and call-site mapping remain open.
 
 Status: **IMPLEMENTED — RAW EQUATIONS RECOVERED; ROBLOX MAPPING PARTIAL**.
@@ -69,31 +66,37 @@ Status: **IMPLEMENTED — RAW EQUATIONS RECOVERED; ROBLOX MAPPING PARTIAL**.
 - `NativeGameplayConfig` remains the 235/235 source-resolved native vector.
 - `NativeParameterResolver` remains the sole runtime source for native configuration values.
 - `NativeWeaponRuntime` is wired into the live weapon controller for source-confirmed weapon timing/energy contracts.
-- No native value is silently replaced with a prototype/Roblox value by these modules.
 
 Status: **IMPLEMENTED — 235/235 STATIC AUTHORITY; SOURCE-CONFIRMED WEAPON TIMING/ENERGY WIRED; ROBLOX RUNTIME PENDING**.
 
 ### P0.7 — Native mission input authority
 - Added `Shared/Missions/NativeMissionConfig.luau` as the mission/global-input adapter over `NativeParameterResolver`.
-- Exposed source-backed mission inputs including mission timing, terrain probabilities, voting steps, debris probability, resource-node timing, respawn time, player wait/full-set flags, and ship/fighter limits.
-- `MissionService` now exposes `GetNativeConfig` / `GetNativeConfigSnapshot` through this authority boundary.
+- `MissionService` exposes `GetNativeConfig` / `GetNativeConfigSnapshot` through this authority boundary.
 - No per-mode sequencing is invented by this layer.
 
 Status: **IMPLEMENTED — SOURCE-BACKED INPUT AUTHORITY; PER-MODE SEQUENCING STILL OPEN**.
 
 ### P0.8 — Native component slot ledger
 - Reconciled the definitive component slot artifact into a complete **56/56 native slot ledger**.
-- Every native ID `0..55` now has an explicit initializer/reference classification.
+- Every native ID `0..55` has an explicit initializer/reference classification.
 - Direct, generated, and referenced-object entries remain distinguished; no generated geometry or native→Roblox identity was guessed.
 
 Status: **IMPLEMENTED — SOURCE LEDGER COMPLETE; NATIVE→ROBLOX SEMANTIC RECONCILIATION PARTIAL**.
 
+### P0.9 — Shield component authority cleanup
+- `ShieldSystem` no longer reads component identity from arbitrary attributes directly.
+- Shield component lookup now binds/reads through `ComponentAuthority`, whose contract requires an explicit `ComponentType` that resolves to a known `Components.Types` definition.
+- No `Instance.Name` or name-pattern classification was introduced.
+- Shield absorption/reboot numerical behavior remains explicitly marked inferred pending recovered native consumer tracing.
+
+Status: **IMPLEMENTED — STATIC AUTHORITY CLEANUP; NATIVE NUMERICAL PARITY OPEN**.
+
 ## Remaining P0
 
-1. Replace remaining shield/power/repair type-name heuristics with authoritative component definitions and recovered source behavior.
-2. Recover exact native-to-Roblox unit conversion and call-site mapping for `anb` physics before parity claims.
-3. Recover and port the exact per-mode MissionBuilder/MissionControl sequencing where raw source evidence is still incomplete.
-4. Resolve native→Roblox semantic identity/geometry for component slots whose constructors/behaviors remain referenced or generated.
+1. Recover exact native-to-Roblox unit conversion and call-site mapping for `anb` physics before parity claims.
+2. Recover and port exact per-mode MissionBuilder/MissionControl sequencing where raw source evidence is still incomplete.
+3. Resolve native→Roblox semantic identity/geometry for component slots whose constructors/behaviors remain referenced or generated.
+4. Recover exact native shield/power/repair numerical consumers and replace remaining inferred gameplay constants only when source-backed.
 
 ## Remaining P1
 

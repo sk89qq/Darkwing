@@ -7,6 +7,10 @@
 	parameters are converted at this boundary only. Damage/force/speed conversion
 	is intentionally not performed here because those native-to-Roblox mappings are
 	not yet source-proven.
+
+	Only parameters with a recovered native configuration key are exposed here.
+	Consumers must not fall back to prototype definition timing/energy when a native
+	contract exists.
 ]=]
 
 local NativeParameterResolver = require(script.Parent:WaitForChild("NativeParameterResolver"))
@@ -16,6 +20,10 @@ local NativeWeaponRuntime = {}
 local NATIVE_TICKS_PER_SECOND = 50
 
 local contracts: { [string]: { Reload: string?, Energy: string? } } = {
+	MachineGun = {
+		Reload = "MACHINE_GUN_RELOAD",
+		Energy = "MACHINE_GUN_ENERGY_USED",
+	},
 	MassDriver = {
 		Reload = "MASS_DRIVER_RELOAD",
 		Energy = "MASS_DRIVER_ENERGY_USED",
@@ -23,6 +31,26 @@ local contracts: { [string]: { Reload: string?, Energy: string? } } = {
 	Laser = {
 		Reload = "LASER_RELOAD",
 		Energy = "LASER_ENERGY_USED",
+	},
+	PhasedEnergyBeam = {
+		Reload = "PHASED_ENERGY_BEAM_RELOAD",
+		Energy = "PHASED_ENERGY_BEAM_ENERGY_USED",
+	},
+	BombletSpray = {
+		Reload = "BOMBLET_SPRAY_RELOAD",
+		Energy = "BOMBLET_SPRAY_ENERGY_USED",
+	},
+	SniperCannon = {
+		Reload = "SNIPER_CANNON_RELOAD",
+		Energy = "SNIPER_CANNON_ENERGY_USED",
+	},
+	Torpedo = {
+		Reload = "TORPEDO_RELOAD",
+		Energy = "TORPEDO_ENERGY_USED",
+	},
+	FighterBay = {
+		Reload = "FIGHTER_BAY_RELOAD",
+		Energy = nil,
 	},
 	MissileLauncher = {
 		Reload = "MISSILES_COOLDOWN",
@@ -42,6 +70,10 @@ local function getNative(key: string): number
 	local value = NativeParameterResolver.Get(key)
 	assert(typeof(value) == "number", "native weapon parameter must be numeric: " .. key)
 	return value
+end
+
+function NativeWeaponRuntime.HasContract(typeName: string): boolean
+	return contracts[typeName] ~= nil
 end
 
 function NativeWeaponRuntime.GetReloadSeconds(typeName: string): number?

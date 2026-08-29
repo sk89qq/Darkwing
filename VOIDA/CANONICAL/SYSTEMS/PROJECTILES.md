@@ -2,72 +2,42 @@
 
 ## CLOSED-FOR-PORT
 - Swept-hit architecture is settled at the implementation boundary.
-- Projectile collision implementation belongs to the replacement engine/runtime.
-
-## IMPLEMENTATION CONTRACT — VERIFIED
 - Projectile spawn uses the recovered weapon-component local longitudinal offset.
 - Native integer angles use `angle * pi / 1024` only at the trig boundary; the native angle domain remains authoritative.
-- Plasma is armor-clipping and persists through armor intersections.
-- Plasma applies configured tick damage while intersecting a target.
-- Plasma terminates on a hull/stopping structural piece or its native lifetime/range limit.
-- Plasma does not use projectile HP as a termination mechanic.
 
-## RUNTIME HANDOFF
-The replacement projectile runtime must expose hit classification before termination:
+## PLASMA BALL — PORT-READY CONTRACT
+- Native component slot: **44**.
+- Native weapon ID: **10**.
+- Launcher polygon: `(3,-3),(3,3),(-3,5),(-3,-5)`.
+- Launcher local longitudinal offset: **-3**.
+- Projectile count: **1**.
+- Projectile damage: **50** (existing canonical/emulation weapon definition).
+- Continuous intersection damage: **10 per active damage tick** (existing canonical/emulation weapon definition).
+- Fire rate: **2 shots/sec** (`0.5 s` nominal shot interval in the existing weapon definition).
+- Projectile range limit: **40** (existing canonical/emulation weapon definition).
+- Projectile speed: **60** (existing canonical/emulation weapon definition).
+- Projectile collision/visual size: **Vector3.new(1,1,1)** in the existing weapon definition.
+- Projectile has **no health pool**.
+- Armor intersections are non-consuming: plasma passes through armor and remains active.
+- While intersecting armor/target damage volume, apply the configured continuous tick damage on each simulation tick; do not destroy on armor contact.
+- A hull/stopping structural impact applies the impact damage and terminates the projectile.
+- If no stopping structural impact occurs first, the projectile terminates at its range/lifetime limit.
+- Do not use the generic one-hit projectile `hit => destroy` path for Plasma.
 
-`structural hit → classify armor vs stopping hull → apply damage → terminate only when native termination rule says so`
+### IMPORTANT NUMERIC PROVENANCE
+The `50 / 10 / 2 / 40 / 60 / Vector3.new(1,1,1)` values above are **confirmed existing project weapon-definition values**, not newly invented native-JAR constants. The supplied JAR evidence definitively establishes Plasma Ball identity, slot/weapon mapping, and native component geometry, but does not expose a separate `PLASMA_BALL_*` numeric configuration family. Keep this provenance distinction explicit rather than falsely labeling these as JAR-native constants.
 
-A generic `hitOccurred => destroy projectile` path is therefore insufficient for Plasma.
+## OTHER NATIVE INPUTS
+Weapon-specific projectile speed, lifetime/range, damage, cooldown, energy and special behavior remain native-resolved where their dedicated configuration keys exist. Projectile-specific collision geometry remains separate from launcher geometry unless native code proves reuse.
 
-## CRITICAL NATIVE BEHAVIOR — PLASMA
-- **Plasma ball is armor-clipping.** It is not stopped by armor geometry on the first intersection.
-- Plasma damage is applied **per simulation tick while the plasma ball intersects the target**.
-- Plasma continues through armor and remains active rather than being consumed by armor contact.
-- **Plasma terminates on impact with a hull/stopping structural piece, or when its projectile lifetime/range limit is reached.**
-- Plasma does not use projectile HP as a termination mechanic.
-- The replacement runtime must not model plasma as a conventional one-hit projectile that terminates on armor contact.
-- Plasma's collision/damage path must distinguish armor penetration from ordinary stopping structural impact.
-
-### Implementation contract
-For a plasma projectile, each simulation step evaluates the projectile against structural damage volumes. If the projectile intersects armor, apply the configured plasma tick damage for that tick and continue the projectile. Armor intersection does not consume the projectile. If the projectile impacts a hull/stopping structural piece, apply the impact damage and terminate the projectile. If the projectile reaches its native lifetime/range limit first, terminate it there.
-
-## NATIVE INPUTS — DERIVED
-
-### Projectile spawn geometry
-The native weapon component definitions provide a definitive weapon-to-component mapping and a signed local spawn/attachment offset. The second constructor argument of the native `wfb` definition is the longitudinal local offset used by the component definition.
-
-| Weapon | Native component slot | Weapon ID | Native polygon | Local longitudinal offset |
-|---|---:|---:|---|---:|
-| Point Defence Laser | 14 | 11 | `(2,-1),(2,1),(-2,0)` | `-2` |
-| Mass Driver | 15 | 0 | `(5,-1),(5,1),(-5,3),(-5,-3)` | `-5` |
-| Laser Beam | 16 | 3 | `(10,-3),(10,3),(-10,1),(-10,-1)` | `-10` |
-| Machine Gun | 17 | 1 | `(10,-5),(10,5),(-10,3),(-10,-3)` | `-10` |
-| Bomblet Spray | 23 | 4 | `(3,-3),(3,3),(-3,1),(-3,-1)` | `-3` |
-| Torpedo | 24 | 6 | `(4,-1),(4,1),(-4,1),(-4,-1)` | `-4` |
-| Sniper Cannon | 25 | 7 | `(8,-1),(8,1),(-8,2),(-8,-2)` | `-8` |
-| Missile Launcher | 27 | 8 | `(8,-3),(8,3),(-8,1),(-8,-1)` | `-8` |
-| Countermeasure / Scrambler | 43 | 9 | `(3,-1),(3,1),(-3,1),(-3,-1)` | `-3` |
-| Plasma | 44 | 10 | `(3,-3),(3,3),(-3,5),(-3,-5)` | `-3` |
-
-These are component-definition/spawn-geometry values, not invented projectile collision shapes. Projectile-specific collision polygons remain separate unless the native projectile class reuses the weapon definition geometry.
-
-### Direction / angle encoding
-Native angle construction uses `atan2` and normalizes by `2π`, establishing a normalized turn representation. Native angle consumers also divide integer angle values by `1024`, establishing the fixed-point relationship:
-
-- `1024` native angle units = `π` radians = half turn.
-- `2048` native angle units = `2π` radians = full turn.
-- normalized turn value = `angle / (2π)`.
-- conversion from native integer angle to radians: `angle * π / 1024`.
-
-Therefore the replacement engine should retain the native integer angle domain and only convert at the math boundary when a floating-point trig operation is required.
-
-## NATIVE INPUTS STILL RELEVANT
-- Weapon-specific projectile speed, lifetime/range, damage, cooldown, energy and special behavior where not already verified.
-- Projectile-specific collision geometry where it is distinct from the weapon component definition.
-- Plasma numeric tick interval/damage and numeric lifetime/range remain to be traced to their native inputs.
+## ANGLE ENCODING
+- `1024` native angle units = `pi` radians = half turn.
+- `2048` native angle units = `2pi` radians = full turn.
+- Native integer angle remains authoritative; convert only at the trig boundary.
 
 ## SOURCE STATUS
-- Weapon component polygons and local offsets above are directly recovered from `wlb.f(byte)` and `COMPONENTS_56.csv`.
-- Angle encoding is directly supported by native `atan2` normalization and native `/1024` angle conversion sites in the supplied JAR preprocessing.
+- Weapon component polygons and local offsets are directly recovered from `wlb.f(byte)` / `COMPONENTS_56.csv`.
+- Plasma Ball identity is directly present in the supplied JAR (`Plasma ball`, `COMPONENT_WEAPON_PLASMABALL_TEXT`, and plasma-ball resources).
 - Plasma armor-clipping and persistent per-tick intersection damage are canonical gameplay requirements.
-- Plasma hull/stopping-piece termination and lifetime/range termination are closed behavioral requirements for the replacement runtime; their numeric limits remain separate native inputs.
+- Plasma hull/stopping-piece termination and lifetime/range termination are closed behavioral requirements.
+- The remaining native-JAR gap is not the gameplay contract itself; it is whether the existing `50 / 10 / 2 / 40 / 60 / size 1` project-definition values can be proven to originate from a hidden native runtime input rather than the emulation layer.

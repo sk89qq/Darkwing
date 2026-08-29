@@ -3,30 +3,31 @@
 	NativeComponentCatalog
 
 	Implementation-facing representation of the original game's 56-slot wfb
-	component table. This is deliberately source-domain data only: it does not
-	assign Roblox component names and it performs no unit conversion.
-
-	Every native slot 0..55 is represented exactly once. Direct polygon slots
-	carry their recovered vertex/origin data. Referenced/generated slots carry
-	the exact recovered source expression/reference so a later execution layer
-	can instantiate the same native definition without guessing an identity.
+	component table. Source-domain only; no Roblox names or unit conversion.
 ]=]
 
 export type NativeSlot = {
-	Id: number,
-	SourceLine: number,
-	DefinitionKind: string,
-	Initializer: string,
-	Behavior: string?,
-	Vertices: { number }?,
-	OriginX: number?,
-	OriginY: number?,
+	Id: number, SourceLine: number, DefinitionKind: string, Initializer: string,
+	Behavior: string?, Vertices: { number }?, OriginX: number?, OriginY: number?,
+}
+
+-- wfb(int[], int, int) source constructor establishes these defaults for
+-- every slot before slot-specific writes. They are therefore native slot
+-- variables, not inferred Roblox defaults.
+export type NativeWfbDefaults = {
+	f: boolean, h: number, r: boolean, s: boolean, z: number, y: number,
+	B: number, d: number, q: number, k: boolean, a: number,
+}
+
+local DEFAULT_WFB: NativeWfbDefaults = {
+	f = false, h = 256, r = false, s = false, z = 256, y = 0,
+	B = 256, d = 0, q = 256, k = true, a = 6,
 }
 
 local slots: { [number]: NativeSlot } = {
 	[0] = { Id = 0, SourceLine = 104, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "wfb2" },
-	[1] = { Id = 1, SourceLine = 106, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{40,0,0,40,-40,0,0,-40},0,0)", Vertices = { 40, 0, 0, 40, -40, 0, 0, -40 }, OriginX = 0, OriginY = 0 },
-	[2] = { Id = 2, SourceLine = 113, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{10,0,0,10,-10,0,0,-10},0,0)", Vertices = { 10, 0, 0, 10, -10, 0, 0, -10 }, OriginX = 0, OriginY = 0 },
+	[1] = { Id = 1, SourceLine = 106, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{40,0,0,40,-40,0,0,-40},0,0)", Vertices = {40,0,0,40,-40,0,0,-40}, OriginX = 0, OriginY = 0 },
+	[2] = { Id = 2, SourceLine = 113, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{10,0,0,10,-10,0,0,-10},0,0)", Vertices = {10,0,0,10,-10,0,0,-10}, OriginX = 0, OriginY = 0 },
 	[3] = { Id = 3, SourceLine = 369, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object" },
 	[4] = { Id = 4, SourceLine = 383, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object" },
 	[5] = { Id = 5, SourceLine = 393, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object" },
@@ -38,22 +39,22 @@ local slots: { [number]: NativeSlot } = {
 	[11] = { Id = 11, SourceLine = 462, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object" },
 	[12] = { Id = 12, SourceLine = 122, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "wfb2" },
 	[13] = { Id = 13, SourceLine = 127, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "wfb2" },
-	[14] = { Id = 14, SourceLine = 135, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{2,-1,2,1,-2,0},-2,0)", Behavior = "weapon=11", Vertices = { 2, -1, 2, 1, -2, 0 }, OriginX = -2, OriginY = 0 },
-	[15] = { Id = 15, SourceLine = 139, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{5,-1,5,1,-5,3,-5,-3},-5,0)", Behavior = "weapon=0", Vertices = { 5, -1, 5, 1, -5, 3, -5, -3 }, OriginX = -5, OriginY = 0 },
-	[16] = { Id = 16, SourceLine = 143, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{10,-3,10,3,-10,1,-10,-1},-10,0)", Behavior = "weapon=3", Vertices = { 10, -3, 10, 3, -10, 1, -10, -1 }, OriginX = -10, OriginY = 0 },
-	[17] = { Id = 17, SourceLine = 152, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{10,-5,10,5,-10,3,-10,-3},-10,0)", Behavior = "weapon=1", Vertices = { 10, -5, 10, 5, -10, 3, -10, -3 }, OriginX = -10, OriginY = 0 },
+	[14] = { Id = 14, SourceLine = 135, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{2,-1,2,1,-2,0},-2,0)", Behavior = "weapon=11", Vertices = {2,-1,2,1,-2,0}, OriginX = -2, OriginY = 0 },
+	[15] = { Id = 15, SourceLine = 139, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{5,-1,5,1,-5,3,-5,-3},-5,0)", Behavior = "weapon=0", Vertices = {5,-1,5,1,-5,3,-5,-3}, OriginX = -5, OriginY = 0 },
+	[16] = { Id = 16, SourceLine = 143, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{10,-3,10,3,-10,1,-10,-1},-10,0)", Behavior = "weapon=3", Vertices = {10,-3,10,3,-10,1,-10,-1}, OriginX = -10, OriginY = 0 },
+	[17] = { Id = 17, SourceLine = 152, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{10,-5,10,5,-10,3,-10,-3},-10,0)", Behavior = "weapon=1", Vertices = {10,-5,10,5,-10,3,-10,-3}, OriginX = -10, OriginY = 0 },
 	[18] = { Id = 18, SourceLine = 341, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object", Behavior = "weapon=2" },
-	[19] = { Id = 19, SourceLine = 155, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{40,5,-40,5,-40,-5,40,-5},-35,0)", Behavior = "generic=kma", Vertices = { 40, 5, -40, 5, -40, -5, 40, -5 }, OriginX = -35, OriginY = 0 },
-	[20] = { Id = 20, SourceLine = 158, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{20,5,-20,5,-20,-5,20,-5},-15,0)", Behavior = "generic=kma", Vertices = { 20, 5, -20, 5, -20, -5, 20, -5 }, OriginX = -15, OriginY = 0 },
+	[19] = { Id = 19, SourceLine = 155, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{40,5,-40,5,-40,-5,40,-5},-35,0)", Behavior = "generic=kma", Vertices = {40,5,-40,5,-40,-5,40,-5}, OriginX = -35, OriginY = 0 },
+	[20] = { Id = 20, SourceLine = 158, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{20,5,-20,5,-20,-5,20,-5},-15,0)", Behavior = "generic=kma", Vertices = {20,5,-20,5,-20,-5,20,-5}, OriginX = -15, OriginY = 0 },
 	[21] = { Id = 21, SourceLine = 491, DefinitionKind = "GENERATED_EXPRESSION", Initializer = "jba.a(...)" },
 	[22] = { Id = 22, SourceLine = 481, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb((int[])object,0,0)" },
-	[23] = { Id = 23, SourceLine = 166, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{3,-3,3,3,-3,1,-3,-1},-3,0)", Behavior = "weapon=4", Vertices = { 3, -3, 3, 3, -3, 1, -3, -1 }, OriginX = -3, OriginY = 0 },
-	[24] = { Id = 24, SourceLine = 170, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{4,-1,4,1,-4,1,-4,-1},-4,0)", Behavior = "weapon=6", Vertices = { 4, -1, 4, 1, -4, 1, -4, -1 }, OriginX = -4, OriginY = 0 },
-	[25] = { Id = 25, SourceLine = 174, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{8,-1,8,1,-8,2,-8,-2},-8,0)", Behavior = "weapon=7", Vertices = { 8, -1, 8, 1, -8, 2, -8, -2 }, OriginX = -8, OriginY = 0 },
-	[26] = { Id = 26, SourceLine = 181, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{6,-4,6,4,-6,3,-6,-3},-6,0)", Behavior = "grapple", Vertices = { 6, -4, 6, 4, -6, 3, -6, -3 }, OriginX = -6, OriginY = 0 },
-	[27] = { Id = 27, SourceLine = 147, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{8,-3,8,3,-8,1,-8,-1},-8,0)", Behavior = "weapon=8", Vertices = { 8, -3, 8, 3, -8, 1, -8, -1 }, OriginX = -8, OriginY = 0 },
-	[28] = { Id = 28, SourceLine = 186, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{3,-3,3,3,-3,3,-3,-3},0,0)", Vertices = { 3, -3, 3, 3, -3, 3, -3, -3 }, OriginX = 0, OriginY = 0 },
-	[29] = { Id = 29, SourceLine = 161, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{5,-5,5,5,-5,5,-5,-5},-5,0)", Vertices = { 5, -5, 5, 5, -5, 5, -5, -5 }, OriginX = -5, OriginY = 0 },
+	[23] = { Id = 23, SourceLine = 166, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{3,-3,3,3,-3,1,-3,-1},-3,0)", Behavior = "weapon=4", Vertices = {3,-3,3,3,-3,1,-3,-1}, OriginX = -3, OriginY = 0 },
+	[24] = { Id = 24, SourceLine = 170, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{4,-1,4,1,-4,1,-4,-1},-4,0)", Behavior = "weapon=6", Vertices = {4,-1,4,1,-4,1,-4,-1}, OriginX = -4, OriginY = 0 },
+	[25] = { Id = 25, SourceLine = 174, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{8,-1,8,1,-8,2,-8,-2},-8,0)", Behavior = "weapon=7", Vertices = {8,-1,8,1,-8,2,-8,-2}, OriginX = -8, OriginY = 0 },
+	[26] = { Id = 26, SourceLine = 181, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{6,-4,6,4,-6,3,-6,-3},-6,0)", Behavior = "grapple", Vertices = {6,-4,6,4,-6,3,-6,-3}, OriginX = -6, OriginY = 0 },
+	[27] = { Id = 27, SourceLine = 147, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{8,-3,8,3,-8,1,-8,-1},-8,0)", Behavior = "weapon=8", Vertices = {8,-3,8,3,-8,1,-8,-1}, OriginX = -8, OriginY = 0 },
+	[28] = { Id = 28, SourceLine = 186, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{3,-3,3,3,-3,3,-3,-3},0,0)", Vertices = {3,-3,3,3,-3,3,-3,-3}, OriginX = 0, OriginY = 0 },
+	[29] = { Id = 29, SourceLine = 161, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{5,-5,5,5,-5,5,-5,-5},-5,0)", Vertices = {5,-5,5,5,-5,5,-5,-5}, OriginX = -5, OriginY = 0 },
 	[30] = { Id = 30, SourceLine = 222, DefinitionKind = "GENERATED_EXPRESSION", Initializer = "new wfb(new int[]{n6,0,-n6,n5,-n6,-n5},-n6,0)" },
 	[31] = { Id = 31, SourceLine = 235, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "wfb3" },
 	[32] = { Id = 32, SourceLine = 243, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object" },
@@ -66,12 +67,12 @@ local slots: { [number]: NativeSlot } = {
 	[39] = { Id = 39, SourceLine = 325, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object" },
 	[40] = { Id = 40, SourceLine = 251, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object" },
 	[41] = { Id = 41, SourceLine = 333, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object" },
-	[42] = { Id = 42, SourceLine = 188, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{5,-8,5,8,-5,5,-5,-5},-5,0)", Vertices = { 5, -8, 5, 8, -5, 5, -5, -5 }, OriginX = -5, OriginY = 0 },
-	[43] = { Id = 43, SourceLine = 193, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{3,-1,3,1,-3,1,-3,-1},-3,0)", Behavior = "weapon=9", Vertices = { 3, -1, 3, 1, -3, 1, -3, -1 }, OriginX = -3, OriginY = 0 },
-	[44] = { Id = 44, SourceLine = 197, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{3,-3,3,3,-3,5,-3,-5},-3,0)", Behavior = "weapon=10", Vertices = { 3, -3, 3, 3, -3, 5, -3, -5 }, OriginX = -3, OriginY = 0 },
+	[42] = { Id = 42, SourceLine = 188, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{5,-8,5,8,-5,5,-5,-5},-5,0)", Behavior = "generic", Vertices = {5,-8,5,8,-5,5,-5,-5}, OriginX = -5, OriginY = 0 },
+	[43] = { Id = 43, SourceLine = 193, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{3,-1,3,1,-3,1,-3,-1},-3,0)", Behavior = "weapon=9", Vertices = {3,-1,3,1,-3,1,-3,-1}, OriginX = -3, OriginY = 0 },
+	[44] = { Id = 44, SourceLine = 197, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{3,-3,3,3,-3,5,-3,-5},-3,0)", Behavior = "weapon=10", Vertices = {3,-3,3,3,-3,5,-3,-5}, OriginX = -3, OriginY = 0 },
 	[45] = { Id = 45, SourceLine = 357, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "object" },
 	[46] = { Id = 46, SourceLine = 134, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "wfb2" },
-	[47] = { Id = 47, SourceLine = 202, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{20,-18,20,18,-11,18,-11,5,-20,5,-20,-5,-11,-5,-11,-18},-20,0)", Vertices = { 20, -18, 20, 18, -11, 18, -11, 5, -20, 5, -20, -5, -11, -5, -11, -18 }, OriginX = -20, OriginY = 0 },
+	[47] = { Id = 47, SourceLine = 202, DefinitionKind = "DIRECT_OR_OBJECT_REFERENCE", Initializer = "new wfb(new int[]{20,-18,20,18,-11,18,-11,5,-20,5,-20,-5,-11,-5,-11,-18},-20,0)", Vertices = {20,-18,20,18,-11,18,-11,5,-20,5,-20,-5,-11,-5,-11,-18}, OriginX = -20, OriginY = 0 },
 	[48] = { Id = 48, SourceLine = 492, DefinitionKind = "GENERATED_EXPRESSION", Initializer = "jba.a(...)" },
 	[49] = { Id = 49, SourceLine = 493, DefinitionKind = "GENERATED_EXPRESSION", Initializer = "jba.a(...)" },
 	[50] = { Id = 50, SourceLine = 494, DefinitionKind = "GENERATED_EXPRESSION", Initializer = "jba.a(...)" },
@@ -83,27 +84,13 @@ local slots: { [number]: NativeSlot } = {
 }
 
 local NativeComponentCatalog = {}
-
-function NativeComponentCatalog.Get(id: number): NativeSlot?
-	return slots[id]
-end
-
-function NativeComponentCatalog.All(): {[number]: NativeSlot}
-	return table.clone(slots)
-end
-
-function NativeComponentCatalog.Count(): number
-	local count = 0
-	for _ in pairs(slots) do count += 1 end
-	return count
-end
-
+function NativeComponentCatalog.Get(id: number): NativeSlot? return slots[id] end
+function NativeComponentCatalog.All(): {[number]: NativeSlot} return table.clone(slots) end
+function NativeComponentCatalog.DefaultWfb(): NativeWfbDefaults return table.clone(DEFAULT_WFB) end
+function NativeComponentCatalog.Count(): number local count = 0; for _ in pairs(slots) do count += 1 end; return count end
 function NativeComponentCatalog.IsComplete(): boolean
 	if NativeComponentCatalog.Count() ~= 56 then return false end
-	for id = 0, 55 do
-		if slots[id] == nil then return false end
-	end
+	for id = 0, 55 do if slots[id] == nil then return false end end
 	return true
 end
-
 return NativeComponentCatalog

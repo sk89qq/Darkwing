@@ -10,6 +10,7 @@
 
 local PhysicsConfig = require(game.ReplicatedStorage.Shared.Physics.PhysicsConfig)
 local MassPoint = require(game.ReplicatedStorage.Shared.Physics.MassPoint)
+local NativeVelocityOperator = require(game.ReplicatedStorage.Shared.Physics.NativeVelocityOperator)
 
 local RigidBody2D = {}
 RigidBody2D.__index = RigidBody2D
@@ -176,7 +177,7 @@ end
 
 function RigidBody2D:ApplyThrust(localThrusterPos: Vector2, localThrustDirection: Vector2, magnitude: number)
 	if self.IsStatic or magnitude <= 0 then return end
-	local localThrustVector = localThrusterDirection.Unit * magnitude
+	local localThrustVector = localThrustDirection.Unit * magnitude
 	self:AddForceAtLocalPoint(localThrustVector, localThrusterPos)
 end
 
@@ -251,6 +252,11 @@ function RigidBody2D:Integrate(dt: number, isBoosting: boolean?)
 	self.AngularVelocity = math.clamp(self.AngularVelocity, -PhysicsConfig.MAX_ANGULAR_SPEED, PhysicsConfig.MAX_ANGULAR_SPEED)
 	self.Rotation += self.AngularVelocity * dt
 	self.Rotation = self.Rotation % (math.pi * 2)
+
+	-- Native anb.a(boolean,boolean,pe) applies the recovered sustain operator
+	-- after advancing position/angle. Keep generic solver integration above and
+	-- perform only this game-specific native boundary here.
+	self.Velocity, self.AngularVelocity = NativeVelocityOperator.Apply(self.Velocity, self.AngularVelocity)
 	self:ClearAccumulators()
 
 	if self.BoundModel or self.BoundPart then

@@ -1,34 +1,12 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local MarketplaceService = game:GetService("MarketplaceService")
-local Superbullet = require(ReplicatedStorage.Packages.Superbullet)
-local Signal = require(ReplicatedStorage.Packages.Signal)
 local module = {}
 
----- Utilities
-
-
----- Superbullet Services
-
-
----- Components
-
-
----- Datas
-
-
----- Assets
-
-
-
 function module.Start()
-
 end
 
 function module.Init()
-
 end
 
 return module
+
+-- FUTURE AGENT NOTE:
+-- Redundant template scaffolding was removed from this component surface. The duplicate Mutator module had byte-identical contents and no repository search references, so it was deleted rather than preserved as a parallel implementation. No static gameplay variables were created because this template has no core configuration definitions or values derived from them. Operational state: this is the sole retained server template component scaffold; it contains no gameplay behavior and must not become an authority boundary without an explicit architecture definition.

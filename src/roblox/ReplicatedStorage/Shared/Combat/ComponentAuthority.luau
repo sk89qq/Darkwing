@@ -7,6 +7,10 @@
 
 	Component binding is fail-closed: the part must carry an explicit ComponentType
 	that exists in VoidHunterComponents. No gameplay state is inferred from Part names.
+
+	Armor damage rule: armor components receive 50% of incoming structural damage.
+	This is applied at the canonical damage-entry point so every damage source shares
+	the same armor behavior and callers do not need separate armor branches.
 ]=]
 
 local HttpService = game:GetService("HttpService")
@@ -127,7 +131,7 @@ function ComponentAuthority.Bind(part: BasePart, explicitTypeName: string?): Com
 		typeName, definition = findDefinition(part)
 	end
 
-	if typeof(typeName) ~= "string" or type(typeName) ~= "string" or type(definition) ~= "table" then
+	if typeof(typeName) ~= "string" or typeof(typeName) ~= "string" or type(definition) ~= "table" then
 		return nil
 	end
 
@@ -236,7 +240,15 @@ function ComponentAuthority.ApplyDamage(part: BasePart, damage: number): (Compon
 		return state, false
 	end
 
-	state.Health = math.max(0, state.Health - damage)
+	-- Armor is a universal structural damage dampener. Component definitions mark
+	-- armor explicitly; all callers therefore receive the same 50% rule.
+	local definition = Components.Types[state.TypeName]
+	local appliedDamage = damage
+	if type(definition) == "table" and definition.IsArmor == true then
+		appliedDamage = damage * 0.5
+	end
+
+	state.Health = math.max(0, state.Health - appliedDamage)
 	local destroyed = state.Health <= 0
 	state.Destroyed = destroyed
 	updateVisual(state)

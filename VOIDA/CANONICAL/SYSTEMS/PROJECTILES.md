@@ -4,6 +4,21 @@
 - Swept-hit architecture is settled at the implementation boundary.
 - Projectile collision implementation belongs to the replacement engine/runtime.
 
+## IMPLEMENTATION CONTRACT — VERIFIED
+- Projectile spawn uses the recovered weapon-component local longitudinal offset.
+- Native integer angles use `angle * pi / 1024` only at the trig boundary; the native angle domain remains authoritative.
+- Plasma is armor-clipping and persists through armor intersections.
+- Plasma applies configured tick damage while intersecting a target.
+- Plasma terminates on a hull/stopping structural piece or its native lifetime/range limit.
+- Plasma does not use projectile HP as a termination mechanic.
+
+## RUNTIME HANDOFF
+The replacement projectile runtime must expose hit classification before termination:
+
+`structural hit → classify armor vs stopping hull → apply damage → terminate only when native termination rule says so`
+
+A generic `hitOccurred => destroy projectile` path is therefore insufficient for Plasma.
+
 ## CRITICAL NATIVE BEHAVIOR — PLASMA
 - **Plasma ball is armor-clipping.** It is not stopped by armor geometry on the first intersection.
 - Plasma damage is applied **per simulation tick while the plasma ball intersects the target**.

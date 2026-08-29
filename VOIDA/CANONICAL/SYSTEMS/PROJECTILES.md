@@ -7,12 +7,14 @@
 ## CRITICAL NATIVE BEHAVIOR — PLASMA
 - **Plasma ball is armor-clipping.** It is not stopped by armor geometry on the first intersection.
 - Plasma damage is applied **per simulation tick while the plasma ball intersects the target**.
-- The same plasma projectile therefore remains active through an armor intersection and may apply repeated tick damage across successive simulation ticks for as long as the intersection condition remains true.
+- Plasma continues through armor and remains active rather than being consumed by armor contact.
+- **Plasma terminates on impact with a hull/stopping structural piece, or when its projectile lifetime/range limit is reached.**
+- Plasma does not use projectile HP as a termination mechanic.
 - The replacement runtime must not model plasma as a conventional one-hit projectile that terminates on armor contact.
-- Plasma's collision/damage path must distinguish **intersection persistence** from ordinary projectile hit-and-destroy behavior.
+- Plasma's collision/damage path must distinguish armor penetration from ordinary stopping structural impact.
 
 ### Implementation contract
-For a plasma projectile, each simulation step must evaluate whether the projectile intersects the target's effective damage volume. If intersecting, apply the configured plasma tick damage for that tick; do not consume the projectile merely because armor was intersected. Projectile termination remains governed by its native lifetime/range/special termination rules, not by the first armor intersection.
+For a plasma projectile, each simulation step evaluates the projectile against structural damage volumes. If the projectile intersects armor, apply the configured plasma tick damage for that tick and continue the projectile. Armor intersection does not consume the projectile. If the projectile impacts a hull/stopping structural piece, apply the impact damage and terminate the projectile. If the projectile reaches its native lifetime/range limit first, terminate it there.
 
 ## NATIVE INPUTS — DERIVED
 
@@ -47,9 +49,10 @@ Therefore the replacement engine should retain the native integer angle domain a
 ## NATIVE INPUTS STILL RELEVANT
 - Weapon-specific projectile speed, lifetime/range, damage, cooldown, energy and special behavior where not already verified.
 - Projectile-specific collision geometry where it is distinct from the weapon component definition.
-- Plasma tick interval/damage value and any native plasma-specific termination rules where not already verified.
+- Plasma numeric tick interval/damage and numeric lifetime/range remain to be traced to their native inputs.
 
 ## SOURCE STATUS
 - Weapon component polygons and local offsets above are directly recovered from `wlb.f(byte)` and `COMPONENTS_56.csv`.
 - Angle encoding is directly supported by native `atan2` normalization and native `/1024` angle conversion sites in the supplied JAR preprocessing.
-- Plasma armor-clipping and persistent per-tick intersection damage are now a **canonical gameplay requirement** for the replacement runtime.
+- Plasma armor-clipping and persistent per-tick intersection damage are canonical gameplay requirements.
+- Plasma hull/stopping-piece termination and lifetime/range termination are closed behavioral requirements for the replacement runtime; their numeric limits remain separate native inputs.

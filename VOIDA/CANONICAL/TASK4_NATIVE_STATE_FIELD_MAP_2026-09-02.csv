@@ -1,0 +1,23 @@
+native_class,field,type,verified_port_mapping,verified_behavior,status
+sg,P,int,current_energy,resource amount state; consumed and bounded by native resource logic,CLOSED_PORT_INPUT
+sg,I,int,recharge_timer,recharge/reload progress state,CLOSED_PORT_INPUT
+sg,C,int,max_energy,derived as jo.e + ml.a(0),CLOSED_PORT_INPUT
+sg,A,int,capability_bitmask,(A & argument) != 0,PARTIAL_SEMANTICS
+sg,J,int[],resource_or_index_list,queried and mutated by native helpers,PARTIAL_SEMANTICS
+sg,M,int,derived_state,sg.y returns -oq.e + M; sg.c may set M=18,PARTIAL_SEMANTICS
+sg,G,int,unknown_accessor_state,returned by w(); compared to oq.I in q(int),PARTIAL_SEMANTICS
+sg,y,boolean,unknown_mode_flag,controls q(int) and UI projection branch,PARTIAL_SEMANTICS
+sg,K,boolean,unknown_state_flag,returned by r(); controls UI projection,PARTIAL_SEMANTICS
+sg,R,boolean,unknown_state_flag,returned by n(int),PARTIAL_SEMANTICS
+sg,O,boolean,unknown_state_flag,controls UI projection,PARTIAL_SEMANTICS
+sg,S,boa,unknown_reference,returned by n(byte); cleared by cleanup path,PARTIAL_SEMANTICS
+sg,x,int[],unknown_cache_or_state,cleared by guard paths,UNRESOLVED
+sg,F,int,unknown,not yet semantically closed,UNRESOLVED
+sg,N,int,unknown_accessor_state,returned by q(byte),UNRESOLVED
+sg,u,int,unknown,not yet semantically closed,UNRESOLVED
+sg,v,int,unknown_timer_or_state,checked before state toggle in m(int),UNRESOLVED
+sg,T,boolean,unknown,not yet semantically closed,UNRESOLVED
+sg,D,boolean,unknown,not yet semantically closed,UNRESOLVED
+sg,w,boolean,unknown,not yet semantically closed,UNRESOLVED
+sg,L,qua,unknown_reference,not yet semantically closed,UNRESOLVED
+sg,z,aoa,auxiliary_object,created/cleared based on native mode logic,PARTIAL_SEMANTICS
